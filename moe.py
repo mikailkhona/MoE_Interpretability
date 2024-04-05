@@ -265,6 +265,8 @@ class MoE(nn.Module):
         training loss of the model.  The backpropagation of this loss
         encourages all experts to be approximately equally used across a batch.
         """
+        import pdb
+        pdb.set_trace()
         gates, load = self.noisy_top_k_gating(x, self.training)
         # calculate importance loss
         importance = gates.sum(0)
