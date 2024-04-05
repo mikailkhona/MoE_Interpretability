@@ -50,7 +50,9 @@ backend : 'nccl' # 'nccl', 'gloo', etc.
 # system
 device : 'cuda' # examples: 'cpu', 'cuda', 'cuda:0', 'cuda:1' etc., or try 'mps' on macbooks
 compile : False # use PyTorch 2.0 to compile the model to be faster
-top_k : 10
+
+top_k : 10  # TODO: not used
+
 temperature : 1 
 num_samples_generated_for_accuracy : 1
 
