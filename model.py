@@ -15,6 +15,7 @@ import torch
 import torch.nn as nn
 from torch.nn import functional as F
 
+import List, Optional, Tuple
 
 @dataclass
 class GPTConfig:
@@ -29,6 +30,7 @@ class GPTConfig:
     n_embd: int = 768
     OneLayerAttentionOnly = False
     TwoLayerAttentionOnly = False
+    MoELayerAttentionOnly = False
     dropout: float = 0.0
     bias: bool = True # True: bias in Linears and LayerNorms, like GPT-2. False: a bit better and faster
 
@@ -147,11 +149,87 @@ class Block(nn.Module):
         x = x + self.mlp(self.ln_2(x))
         return x
 
+class MoEBlock(nn.Module):
+    '''
+    One self-attention block
+    '''
+    
+    def __init__(self, config):
+        super().__init__()
+        self.ln_1 = LayerNorm(config.n_embd, bias=config.bias)
+        self.attn = CausalSelfAttention(config)
+        self.ln_2 = LayerNorm(config.n_embd, bias=config.bias)
+        self.mlp = MoeLayer(config) #Replace with MOE Layer
+
+    def forward(self, x):
+        '''
+        Add to residual stream after self-attention and MLP.
+        '''
+
+        x = x + self.attn(self.ln_1(x))
+        x = x + self.mlp(self.ln_2(x))
+        return x
+
 class IdentityLinear(nn.Linear):
     def __init__(self, features):
         super(IdentityLinear, self).__init__(features, features)
         self.weight.data = torch.eye(features)
         self.bias.data = torch.zeros(features)
+
+class MoeLayer(nn.Module):
+    def __init__(self, experts: List[nn.Module], gate: nn.Module, moe_args: MoeArgs):
+        super().__init__()
+        assert len(experts) > 0
+        self.experts = nn.ModuleList(experts)
+        self.gate = gate
+        self.args = moe_args
+
+    def forward(self, inputs: torch.Tensor):
+        inputs_squashed = inputs.view(-1, inputs.shape[-1])
+        gate_logits = self.gate(inputs_squashed)
+        weights, selected_experts = torch.topk(
+            gate_logits, self.args.num_experts_per_tok
+        )
+        weights = nn.functional.softmax(
+            weights,
+            dim=1,
+            dtype=torch.float,
+        ).type_as(inputs)
+        results = torch.zeros_like(inputs_squashed)
+        for i, expert in enumerate(self.experts):
+            batch_idx, nth_expert = torch.where(selected_experts == i)
+            results[batch_idx] += weights[batch_idx, nth_expert, None] * expert(
+                inputs_squashed[batch_idx]
+            )
+        return results.view_as(inputs)
+    
+class TransformerBlock(nn.Module):
+    def __init__(self, args: ModelArgs):
+        super().__init__()
+        self.n_heads = args.n_heads
+        self.dim = args.dim
+        self.attention = Attention(args)
+        self.feed_forward = MoeLayer(
+            experts=[FeedForward(args=args) for _ in range(args.moe.num_experts)],
+            gate=nn.Linear(args.dim, args.moe.num_experts, bias=False),
+            moe_args=args.moe,
+        )
+        self.attention_norm = RMSNorm(args.dim, eps=args.norm_eps)
+        self.ffn_norm = RMSNorm(args.dim, eps=args.norm_eps)
+        self.args = args
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        freqs_cis: torch.Tensor,
+        positions: torch.Tensor,
+        mask: Optional[torch.Tensor],
+    ) -> torch.Tensor:
+        r = self.attention.forward(self.attention_norm(x), freqs_cis, positions, mask)
+        h = x + r
+        r = self.feed_forward.forward(self.ffn_norm(h))
+        out = h + r
+        return out
 
 class GPT(nn.Module):
 
@@ -168,11 +246,11 @@ class GPT(nn.Module):
             h = nn.ModuleList([LayerNorm(config.n_embd, bias=config.bias), CausalSelfAttention(config)]),
             ln_f = IdentityLinear(config.n_embd,config.n_embd),
         ))
-        elif config.TwoLayerAttentionOnly:
+        elif config.MoELayerAttentionOnly:
             self.transformer = nn.ModuleDict(dict(
                 wte = nn.Embedding(config.vocab_size, config.n_embd),
                 wpe = nn.Embedding(config.block_size, config.n_embd),
-                h = nn.ModuleList([LayerNorm(config.n_embd, bias=config.bias), CausalSelfAttention(config), CausalSelfAttention(config)]),
+                h = nn.ModuleList([MoeLayer()]),
                 ln_f = IdentityLinear(config.n_embd, config.n_embd)
             ))         
         else:
