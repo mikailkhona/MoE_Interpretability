@@ -1,0 +1,7 @@
+graphviz
+networkx 
+numpy
+pandas
+torch
+hydra-core
+wandb
