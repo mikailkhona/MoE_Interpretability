@@ -179,7 +179,7 @@ class IdentityLinear(nn.Linear):
         self.bias.data = torch.zeros(features)
 
 class MoeLayer(nn.Module):
-    def __init__(self, experts: List[nn.Module], gate: nn.Module, moe_args: MoeArgs):
+    def __init__(self, experts: List[nn.Module], gate: nn.Module, moe_args):
         super().__init__()
         assert len(experts) > 0
         self.experts = nn.ModuleList(experts)
@@ -225,7 +225,7 @@ class GPT(nn.Module):
             self.transformer = nn.ModuleDict(dict(
                 wte = nn.Embedding(config.vocab_size, config.n_embd),
                 wpe = nn.Embedding(config.block_size, config.n_embd),
-                h = nn.ModuleList([MoeLayer()]),
+                h = nn.ModuleList([MoEBlock(config)]),
                 ln_f = IdentityLinear(config.n_embd, config.n_embd)
             ))         
         else:
