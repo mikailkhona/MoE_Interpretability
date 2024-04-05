@@ -259,12 +259,13 @@ class MoEGPT(nn.Module):
             # if we are given some desired targets also calculate the loss
             logits = self.LM_head(x)
             loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=0)
+            loss = loss + aux_loss 
         else:
             # inference-time mini-optimization: only forward the LM_head on the very last position
             logits = self.LM_head(x[:, [-1], :]) # note: using list [-1] to preserve the time dim
             loss = None
 
-        return logits, loss
+        return logits, loss 
 
     def crop_block_size(self, block_size):
         # model surgery to decrease the block size if necessary

@@ -253,7 +253,7 @@ class MoE(nn.Module):
             load = self._gates_to_load(gates)
         return gates, load
 
-    def forward(self, x, loss_coef=1e-2):
+    def forward(self, x, loss_coef=1e-2, gates = None):
         """Args:
         x: tensor shape [batch_size, input_size]
         train: a boolean scalar.
@@ -266,15 +266,18 @@ class MoE(nn.Module):
         encourages all experts to be approximately equally used across a batch.
         """
         # x: (batch, time, n_embd)
-        gates, load = self.noisy_top_k_gating(x, self.training)
-        # gates: (batch, time, num_experts)
-        # load: (time, num_experts)
+        if gates is None:
+            # gates: (batch, time, num_experts)
+            # load: (time, num_experts)
+            gates, load = self.noisy_top_k_gating(x, self.training)
+            # calculate importance loss
+            importance = gates.sum(0)
+            loss = self.cv_squared(importance) + self.cv_squared(load)
+            loss *= loss_coef
+        else:
+            loss = 0
 
-        # calculate importance loss
-        importance = gates.sum(0)
 
-        loss = self.cv_squared(importance) + self.cv_squared(load)
-        loss *= loss_coef
         batch_size = gates.shape[0]
         time = gates.shape[1]
 

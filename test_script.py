@@ -13,4 +13,8 @@ n_embd = config.n_embd
 
 model = MoEGPT(config)
 x = torch.randint(100, (batch_size, 10))
-model, loss = model(x)
+target = torch.randint(100, (batch_size, 10))
+output, loss = model(x, target)
+print(output.shape)
+
+print(loss)
