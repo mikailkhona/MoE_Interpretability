@@ -14,6 +14,22 @@ from torch.distributions.normal import Normal
 import numpy as np
 
 
+class MLP(nn.Module):
+
+    def __init__(self, config):
+        super().__init__()
+        self.c_fc    = nn.Linear(config.n_embd, 4 * config.n_embd, bias=config.bias)
+        self.gelu    = nn.GELU()
+        self.c_proj  = nn.Linear(4 * config.n_embd, config.n_embd, bias=config.bias)
+        self.dropout = nn.Dropout(config.dropout)
+
+    def forward(self, x):
+        x = self.c_fc(x)
+        x = self.gelu(x)
+        x = self.c_proj(x)
+        x = self.dropout(x)
+        return x
+
 class SparseDispatcher(object):
     """Helper for implementing a mixture of experts.
     The purpose of this class is to create input minibatches for the
@@ -111,22 +127,6 @@ class SparseDispatcher(object):
         # split nonzero gates for each expert
         return torch.split(self._nonzero_gates, self._part_sizes, dim=0)
 
-class MLP(nn.Module):
-    def __init__(self, input_size, output_size, hidden_size):
-        super(MLP, self).__init__()
-        self.fc1 = nn.Linear(input_size, hidden_size)
-        self.fc2 = nn.Linear(hidden_size, output_size)
-        self.relu = nn.ReLU()
-        self.soft = nn.Softmax(1)
-
-    def forward(self, x):
-        out = self.fc1(x)
-        out = self.relu(out)
-        out = self.fc2(out)
-        out = self.soft(out)
-        return out
-
-
 class MoE(nn.Module):
 
     """Call a Sparsely gated mixture of experts layer with 1-layer Feed-Forward networks as experts.
@@ -139,16 +139,16 @@ class MoE(nn.Module):
     k: an integer - how many experts to use for each batch element
     """
 
-    def __init__(self, input_size, output_size, num_experts, hidden_size, noisy_gating=True, k=4):
+    def __init__(self, config):
         super(MoE, self).__init__()
-        self.noisy_gating = noisy_gating
-        self.num_experts = num_experts
-        self.output_size = output_size
-        self.input_size = input_size
-        self.hidden_size = hidden_size
+        self.noisy_gating = config.oisy_gating
+        self.num_experts = config.num_experts
+        self.output_size = config.output_size
+        self.input_size = config.input_size
+        self.hidden_size = config.hidden_size
         self.k = k
         # instantiate experts
-        self.experts = nn.ModuleList([MLP(self.input_size, self.output_size, self.hidden_size) for i in range(self.num_experts)])
+        self.experts = nn.ModuleList([MLP(config) for i in range(self.num_experts)])
         self.w_gate = nn.Parameter(torch.zeros(input_size, num_experts), requires_grad=True)
         self.w_noise = nn.Parameter(torch.zeros(input_size, num_experts), requires_grad=True)
 
