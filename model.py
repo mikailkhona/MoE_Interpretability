@@ -14,7 +14,7 @@ from dataclasses import dataclass
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
-
+from einops import rearrange
 from typing import List, Optional, Tuple
 
 from moe import MoE
@@ -191,7 +191,8 @@ class MoEGPT(nn.Module):
             wte = nn.Embedding(config.vocab_size, config.n_embd),
             wpe = nn.Embedding(config.block_size, config.n_embd),
             h = nn.ModuleList([MoEBlock(config)]),
-            ln_f = IdentityLinear(config.n_embd, config.n_embd)
+            drop = nn.Dropout(config.dropout),
+            ln_f = LayerNorm(config.n_embd, bias=config.bias),
         ))        
             
         self.LM_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)

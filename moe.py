@@ -146,11 +146,11 @@ class MoE(nn.Module):
         self.output_size = config.n_embd
         self.input_size = config.n_embd
         self.hidden_size = 4*config.n_embd
-        self.k = k
+        self.k = config.expert_k
         # instantiate experts
         self.experts = nn.ModuleList([MLP(config) for i in range(self.num_experts)])
-        self.w_gate = nn.Parameter(torch.zeros(input_size, num_experts), requires_grad=True)
-        self.w_noise = nn.Parameter(torch.zeros(input_size, num_experts), requires_grad=True)
+        self.w_gate = nn.Parameter(torch.zeros(self.input_size, self.num_experts), requires_grad=True)
+        self.w_noise = nn.Parameter(torch.zeros(self.input_size, self.num_experts), requires_grad=True)
 
         self.softplus = nn.Softplus()
         self.softmax = nn.Softmax(1)
