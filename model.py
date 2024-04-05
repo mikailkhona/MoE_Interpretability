@@ -15,7 +15,7 @@ import torch
 import torch.nn as nn
 from torch.nn import functional as F
 
-import List, Optional, Tuple
+from typing import List, Optional, Tuple
 
 @dataclass
 class GPTConfig:
