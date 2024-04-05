@@ -69,7 +69,7 @@ class SparseDispatcher(object):
         # sort experts
         sorted_experts, index_sorted_experts = torch.nonzero(gates).sort(0)
         # drop indices
-        _, self._expert_index = sorted_experts.split(1, dim=1)
+        _, self._expert_index = sorted_experts.split(1, dim=-1)
         # get according batch index for each expert
         self._batch_index = torch.nonzero(gates)[index_sorted_experts[:, 1], 0]
         # calculate num samples that each expert gets
@@ -239,7 +239,7 @@ class MoE(nn.Module):
             logits = clean_logits
 
         # calculate topk + 1 that will be needed for the noisy gates
-        top_logits, top_indices = logits.topk(min(self.k + 1, self.num_experts), dim=1)
+        top_logits, top_indices = logits.topk(min(self.k + 1, self.num_experts), dim=-1)
         top_k_logits = top_logits[:, :self.k]
         top_k_indices = top_indices[:, :self.k]
         top_k_gates = self.softmax(top_k_logits)
@@ -265,18 +265,20 @@ class MoE(nn.Module):
         training loss of the model.  The backpropagation of this loss
         encourages all experts to be approximately equally used across a batch.
         """
-        import pdb
-        pdb.set_trace()
         gates, load = self.noisy_top_k_gating(x, self.training)
         # calculate importance loss
         importance = gates.sum(0)
         #
         loss = self.cv_squared(importance) + self.cv_squared(load)
         loss *= loss_coef
+        batch_size = gates.shape[0]
+        time = gates.shape[1]
 
+        gates = gates.view(-1, self.num_experts)
+        x = x.view(-1, x.size(-1))
         dispatcher = SparseDispatcher(self.num_experts, gates)
         expert_inputs = dispatcher.dispatch(x)
         gates = dispatcher.expert_to_gates()
         expert_outputs = [self.experts[i](expert_inputs[i]) for i in range(self.num_experts)]
         y = dispatcher.combine(expert_outputs)
-        return y, loss
+        return y.reshape(batch_size, time, -1), loss
