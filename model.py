@@ -159,7 +159,9 @@ class MoEBlock(nn.Module):
         self.ln_1 = LayerNorm(config.n_embd, bias=config.bias)
         self.attn = CausalSelfAttention(config)
         self.ln_2 = LayerNorm(config.n_embd, bias=config.bias)
-        self.mlp = MoeLayer(config) #Replace with MOE Layer
+        self.mlp = MoeLayer(experts=[MLP(config) for _ in range(config.moe.num_experts)],
+            gate=nn.Linear(config.dim, config.moe.num_experts, bias=False),
+            moe_args=config.moe,) #Replace with MOE Layer
 
     def forward(self, x):
         '''
@@ -202,34 +204,7 @@ class MoeLayer(nn.Module):
                 inputs_squashed[batch_idx]
             )
         return results.view_as(inputs)
-    
-class TransformerBlock(nn.Module):
-    def __init__(self, args: ModelArgs):
-        super().__init__()
-        self.n_heads = args.n_heads
-        self.dim = args.dim
-        self.attention = Attention(args)
-        self.feed_forward = MoeLayer(
-            experts=[FeedForward(args=args) for _ in range(args.moe.num_experts)],
-            gate=nn.Linear(args.dim, args.moe.num_experts, bias=False),
-            moe_args=args.moe,
-        )
-        self.attention_norm = RMSNorm(args.dim, eps=args.norm_eps)
-        self.ffn_norm = RMSNorm(args.dim, eps=args.norm_eps)
-        self.args = args
-
-    def forward(
-        self,
-        x: torch.Tensor,
-        freqs_cis: torch.Tensor,
-        positions: torch.Tensor,
-        mask: Optional[torch.Tensor],
-    ) -> torch.Tensor:
-        r = self.attention.forward(self.attention_norm(x), freqs_cis, positions, mask)
-        h = x + r
-        r = self.feed_forward.forward(self.ffn_norm(h))
-        out = h + r
-        return out
+   
 
 class GPT(nn.Module):
 
