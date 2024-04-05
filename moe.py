@@ -141,11 +141,11 @@ class MoE(nn.Module):
 
     def __init__(self, config):
         super(MoE, self).__init__()
-        self.noisy_gating = config.oisy_gating
+        self.noisy_gating = config.noisy_gating
         self.num_experts = config.num_experts
-        self.output_size = config.output_size
-        self.input_size = config.input_size
-        self.hidden_size = config.hidden_size
+        self.output_size = config.n_embd
+        self.input_size = config.n_embd
+        self.hidden_size = 4*config.n_embd
         self.k = k
         # instantiate experts
         self.experts = nn.ModuleList([MLP(config) for i in range(self.num_experts)])
