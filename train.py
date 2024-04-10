@@ -7,7 +7,7 @@ import numpy as np
 import torch
 from torch.distributed import init_process_group, destroy_process_group
 import wandb
-from model import GPTConfig, GPT
+from model import GPTConfig, GPT, MoEGPT
 import hydra
 from utils import get_dataloader, get_dataloader_lol, dotdict, get_cosine_warmp_lr, check_generated_path_accuracy
 import pdb
@@ -85,8 +85,11 @@ def main(cfg):
     if cfg.init_from == 'scratch':
         # init a new model from scratch
         print("Initializing a new model from scratch")
-        gptconf = GPTConfig(**model_args)
-        model = GPT(gptconf)
+        # gptconf = GPTConfig(**model_args)
+        # model = GPT(gptconf)
+
+        cfg.vocab_size = meta_vocab_size + 1
+        model = MoEGPT(cfg)
 
    # Checkpointing
     elif cfg.init_from == 'resume':
