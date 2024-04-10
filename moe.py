@@ -273,6 +273,9 @@ class MoE(nn.Module):
         gates = gates.view(batch_size, time, self.num_experts)
         # gates: (batch, time, num_experts)
         # load: (num_experts)
+        # store for logging
+        self.gates = gates
+        self.load = load
 
         # calculate importance loss
         importance = gates.sum(0)

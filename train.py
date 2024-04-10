@@ -212,6 +212,7 @@ def main(cfg):
                 model.eval()
                 with torch.no_grad():
                     with ctx:
+                        
                         for k in range(num_samples):
                             x,_ = next(dataloader)
                             # Generate a list of lists of sequences
@@ -220,8 +221,9 @@ def main(cfg):
                 model.train()
                 edge_accuracies, does_end_at_targets, path_lengths = check_generated_path_accuracy(dag, generated_paths, token_map)
                 edge_accuracies[np.isnan(edge_accuracies)] = 0
-                
 
+                expert_load = model.transformer.blocks[0].mlp.load.detach().cpu().numpy()
+                print("expert load", expert_load)
                 wandb.log({
                     "iter": iter_num,
                     "train/loss": losses['train'],
@@ -229,7 +231,8 @@ def main(cfg):
                     "lr": lr,
                     "edge_accuracies": np.mean(edge_accuracies),
                     "does_end_at_target": np.mean(does_end_at_targets),
-                    "path_lengths": np.mean(path_lengths)
+                    "path_lengths": np.mean(path_lengths),
+                    "expert_load": expert_load,
                 })
 
             # evaluate and checkpoint model
