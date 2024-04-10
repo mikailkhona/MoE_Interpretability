@@ -2,8 +2,6 @@ import inspect
 import numpy as np
 import pandas as pd
 import networkx as nx
-import graphviz
-from itertools import combinations, chain
 import itertools
 import matplotlib.pyplot as plt
 from scipy.stats import poisson
@@ -372,8 +370,18 @@ def create_tree_like_dag(num_nodes):
     adj_matrix = nx.to_numpy_array(G)
     return adj_matrix, partitioned_node_names, G
 
+def check_eval_path_in_training_fraction(list_of_tokens_eval, list_of_tokens_train):
+    count = 0
+    for tmp_eval in list_of_tokens_eval:
+        start = tmp_eval[1]
+        end = tmp_eval[2]
+        bool_count = False
+        for tmp_train in list_of_tokens_train:
+            if start in tmp_train and end in tmp_train: bool_count = True
+        if bool_count: count += 1
+    print(count/float(len(list_of_tokens_eval)))
 
-if name == 'main':
+if __name__ == '__main__':
     num_nodes = 10
     p = 0.5
     # Have at least one intermediate node to define it as a path
@@ -387,35 +395,34 @@ if name == 'main':
         graph_cgm, graph_dag, path_dict_no_prompt, path_length_dict_no_prompt = create_random_DAG(num_nodes=num_nodes, p=p)
     
     path_dict_cot = {}
-    path_dict_direct = {}
     path_length_dict = {}
-    non_path_dict = {}
+
     # Finding all simple paths in the DAG
     for source in graph_dag.nodes:
         for target in graph_dag.nodes:
             if source != target:
-            if(nx.has_path(graph_dag, source, target)):
-                for path in nx.all_simple_paths(graph_dag, source, target, cutoff=None):
-                    #if there already exists a path, append this new one to it
-                    if(path_dict_cot.get((source,target)) is not None):
-                    path.insert(0, list(path)[-1])
-                    path.insert(0, 'target')
-                    path.append('path')
-                    path.append('###')
-                    path_dict_cot[(source,target)].append(list(path))
-                    path_length_dict[(source,target)].append(len(path)-4)
+                if(nx.has_path(graph_dag, source, target)):
+                    for path in nx.all_simple_paths(graph_dag, source, target, cutoff=None):
+                        #if there already exists a path, append this new one to it
+                        if(path_dict_cot.get((source,target)) is not None):
+                            path.insert(0, list(path)[-1])
+                            path.insert(0, 'target')
+                            path.append('path')
+                            path.append('###')
+                            path_dict_cot[(source,target)].append(list(path))
+                            path_length_dict[(source,target)].append(len(path)-4)
 
-                    #otherwise create a new dictionary item
-                    else:
-                    path_dict_direct[(source,target)] = ['target', target, source, 'path', '###']
-                    path.insert(0, list(path)[-1])
-                    path.insert(0, 'target')
-                    path.append('path')
-                    path.append('###')
-                    path_dict_cot[(source,target)] = [list(path)]
-                    path_length_dict[(source,target)] = [len(path)-4]
-            else:
-                non_path_dict[(source,target)] = ['target', target, source, 'nopath', '###']
+                        #otherwise create a new dictionary item
+                        else:
+                            path.insert(0, list(path)[-1])
+                            path.insert(0, 'target')
+                            path.append('path')
+                            path.append('###')
+                            path_dict_cot[(source,target)] = [list(path)]
+                            path_length_dict[(source,target)] = [len(path)-4]
+                else:
+                    # non_path_dict[(source,target)] = ['target', target, source, 'nopath', '###']
+                    continue
 
     #Make shortest
     for key in path_dict_cot:
@@ -424,35 +431,117 @@ if name == 'main':
         path_length_dict[key].sort()
 
     edge_pairs = [key for key, value in path_length_dict.items() if any(path_value == path_length_threshold for path_value in value)]
-    print(len(edge_pairs))
+    print(f"Number of edges is: {len(edge_pairs)}")
     node_pairs_exceeding_threshold = [key for key, value in path_length_dict.items() if any(path_value > path_length_threshold for path_value in value)]
-    print(len(node_pairs_exceeding_threshold))
-
-    print('Sanity check edge pairs and node pairs exceeding threshold')
+    print(f"Number of path-connected node pairs is {len(node_pairs_exceeding_threshold)}")
+    print('Sanity check edge pairs and node pairs exceeding threshold: ')
     print(len([node_pair for node_pair in node_pairs_exceeding_threshold if node_pair in edge_pairs]))
 
     num_paths = int(frac*len(node_pairs_exceeding_threshold))
 
     chosen_node_pairs = random.sample(node_pairs_exceeding_threshold, num_paths)
-    print('Number of chosen node pairs')
-    print(len(chosen_node_pairs))
-
+    print(f'Number of chosen node pairs is {len(chosen_node_pairs)}')
+    
     held_out_node_pairs = [t for t in node_pairs_exceeding_threshold if t not in chosen_node_pairs]
-
-    non_path_node_pairs = get_non_path_connected(graph_cgm.dag)
-    print(len(non_path_node_pairs))
-
-    num_non_paths = int(frac*len(non_path_node_pairs))
-
-    chosen_non_path_node_pairs = random.sample(non_path_node_pairs, num_non_paths)
-    print(len(chosen_non_path_node_pairs))
-
-    held_out_non_path_node_pairs = [t for t in non_path_node_pairs if t not in chosen_non_path_node_pairs]
-
 
     ## Sanity check
     print('Sanity checks (should be empty list output for overlap between chosen and held out):')
     print([node_pair for node_pair in chosen_node_pairs if node_pair in held_out_node_pairs])
-    print([node_pair for node_pair in chosen_non_path_node_pairs if node_pair in held_out_non_path_node_pairs])
 
 
+    path_strings_chosen_cot = [path for node_pair in chosen_node_pairs for path in path_dict_cot.get(node_pair, [])]
+    path_strings_held_out_cot = [path for node_pair in held_out_node_pairs for path in path_dict_cot.get(node_pair, [])]
+
+    path_strings_edge_pairs_cot = [path_dict_cot[node_pair][0] for node_pair in edge_pairs]
+
+    sample_strings_train_path_cot =  path_strings_chosen_cot
+    print("sample_strings_train_path_cot", len(sample_strings_train_path_cot))
+
+    # sample_strings_eval_path_cot = random.sample(path_strings_held_out_cot, int(0.2*nsamples))
+    sample_strings_eval_path_cot = path_strings_held_out_cot
+    print("sample_strings_eval_path_cot", len(sample_strings_eval_path_cot))
+
+
+    ##### Tokenization
+    flattened_list_train_cot = [element for sublist in sample_strings_train_path_cot for element in sublist]
+    alphabets = list(set(flattened_list_train_cot))
+    n_alphabets = len(alphabets)
+    token_map = {}
+    token_idx_map = {}
+    # Alphabet tokens
+    for i in range(n_alphabets):
+        token_map[i] = alphabets[i]
+        token_idx_map[alphabets[i]] = i
+
+    list_of_tokens_train_cot = [[token_idx_map[element] for element in sublist] for sublist in sample_strings_train_path_cot]
+    print(len(list_of_tokens_train_cot))
+
+    flattened_list_eval_cot = [element for sublist in sample_strings_eval_path_cot for element in sublist]
+    # Make sure train and eval have all node names and same tokens
+    assert set(flattened_list_eval_cot).issubset(set(flattened_list_train_cot))
+    list_of_tokens_eval_cot = [[token_idx_map[element] for element in sublist] for sublist in sample_strings_eval_path_cot]
+
+    print(len(list_of_tokens_eval_cot))
+
+    # flattened_list_train_direct = [element for sublist in sample_strings_train_path_direct for element in sublist]
+    # # Make sure train and eval have all node names and same tokens
+    # assert set(flattened_list_train_direct).issubset(set(flattened_list_train_cot))
+    # list_of_tokens_train_direct = [[token_idx_map[element] for element in sublist] for sublist in sample_strings_train_path_direct]
+
+    # print(len(list_of_tokens_train_direct))
+
+    # flattened_list_eval_direct = [element for sublist in sample_strings_eval_path_direct for element in sublist]
+    # Make sure train and eval have all node names and same tokens
+    # assert set(flattened_list_eval_direct).issubset(set(flattened_list_train_cot))
+    # list_of_tokens_eval_direct = [[token_idx_map[element] for element in sublist] for sublist in sample_strings_eval_path_direct]
+
+    # print(len(list_of_tokens_eval_direct))
+
+    max_length_cot = max([len(seq) for seq in list_of_tokens_train_cot])
+    # max_length_direct = max([len(seq) for seq in list_of_tokens_train_direct])
+    # max_length = max([max_length_cot, max_length_direct])
+
+
+    list_of_tokens_train_cot = np.array(pad_nested_list(list_of_tokens_train_cot))
+    # list_of_tokens_train_direct = np.array(pad_nested_list(list_of_tokens_train_direct))
+    list_of_tokens_eval_cot = np.array(pad_nested_list(list_of_tokens_eval_cot))
+    # list_of_tokens_eval_direct = np.array(pad_nested_list(list_of_tokens_eval_direct))
+    # print(np.max(list_of_tokens_train_cot), len(list_of_tokens_train_cot))
+    # print(np.max(list_of_tokens_train_direct), len(list_of_tokens_train_direct))
+
+
+    ### Save everything
+    np.save('tokens_path_train_cot.npy',np.array(list_of_tokens_train_cot))
+    np.save('tokens_path_eval_cot.npy',np.array(list_of_tokens_eval_cot))
+    np.save('tokens_path_train_direct.npy',np.array(list_of_tokens_train_direct))
+    np.save('tokens_path_eval_direct.npy',np.array(list_of_tokens_eval_direct))
+
+    G = graph_dag
+
+    dag_file_name = "dag_path.pkl"
+    with open(dag_file_name, "wb") as f:
+        pickle.dump(G, f)
+    files.download(dag_file_name)
+
+    graph_dict = {}
+
+    graph_dict['chosen_node_pairs'] = chosen_node_pairs
+    graph_dict['held_out_node_pairs'] = held_out_node_pairs
+
+    # graph_dict['chosen_non_path_node_pairs'] = chosen_non_path_node_pairs
+    # graph_dict['held_out_non_path_node_pairs'] = held_out_non_path_node_pairs
+
+    graph_dict['path_dict'] = path_dict_no_prompt
+    graph_dict['path_length_dict'] = path_length_dict_no_prompt
+
+    graph_dict['token_map'] = token_map
+    graph_dict['token_idx_map'] = token_idx_map
+
+    graph_dict['eval_pairs_dict'] = eval_pairs_dict
+
+    graph_file_name = "graph_path.npz"
+
+    np.savez(graph_file_name,**graph_dict)
+    # files.download(graph_file_name)
+
+    check_eval_path_in_training_fraction(list_of_tokens_eval_cot,list_of_tokens_train_cot)
