@@ -516,7 +516,7 @@ def contains_cycle(edges):
 
 
 def pad_nested_list(nested_list, padding_value=-1):
-    #max_length = max(len(sub_list) for sub_list in nested_list)
+    max_length = max(len(sub_list) for sub_list in nested_list)
 
     for sub_list in nested_list:
         while len(sub_list) < max_length:
