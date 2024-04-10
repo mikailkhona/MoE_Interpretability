@@ -222,7 +222,7 @@ class MoE(nn.Module):
         """Noisy top-k gating.
           See paper: https://arxiv.org/abs/1701.06538.
           Args:
-            x: input Tensor with shape [batch_size, input_size]
+            x: input Tensor with shape [batch_size, sequence, input_size]
             train: a boolean - we only add noise at training time.
             noise_epsilon: a float
           Returns:
@@ -239,10 +239,10 @@ class MoE(nn.Module):
             logits = clean_logits
 
         # calculate topk + 1 that will be needed for the noisy gates
-        top_logits, top_indices = logits.topk(min(self.k + 1, self.num_experts), dim=1)
-        top_k_logits = top_logits[:, :self.k]
-        top_k_indices = top_indices[:, :self.k]
-        top_k_gates = self.softmax(top_k_logits)
+        top_logits, top_indices = logits.topk(min(self.k + 1, self.num_experts), dim=-1)
+        top_k_logits = top_logits[:,:,:self.k]
+        top_k_indices = top_indices[:,:,:self.k]
+        top_k_gates = self.softmax(top_k_logits, dim=-1)
 
         zeros = torch.zeros_like(logits, requires_grad=True)
         gates = zeros.scatter(1, top_k_indices, top_k_gates)
@@ -265,8 +265,10 @@ class MoE(nn.Module):
         training loss of the model.  The backpropagation of this loss
         encourages all experts to be approximately equally used across a batch.
         """
+        import pdb; pdb.set_trace()
         gates, load = self.noisy_top_k_gating(x, self.training)
         # calculate importance loss
+        # sum over batch dimension
         importance = gates.sum(0)
         #
         loss = self.cv_squared(importance) + self.cv_squared(load)
