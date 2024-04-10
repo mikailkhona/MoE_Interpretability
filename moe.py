@@ -226,7 +226,7 @@ class MoE(nn.Module):
             train: a boolean - we only add noise at training time.
             noise_epsilon: a float
           Returns:
-            gates: a Tensor with shape [batch_size, num_experts]
+            gates: a Tensor with shape [batch_size, sequence, num_experts]
             load: a Tensor with shape [num_experts]
         """
         clean_logits = x @ self.w_gate
