@@ -240,8 +240,8 @@ class MoE(nn.Module):
 
         # calculate topk + 1 that will be needed for the noisy gates
         top_logits, top_indices = logits.topk(min(self.k + 1, self.num_experts), dim=-1)
-        top_k_logits = top_logits[:,:,:self.k]
-        top_k_indices = top_indices[:,:,:self.k]
+        top_k_logits = top_logits[:, :, :self.k]
+        top_k_indices = top_indices[:, :, :self.k]
         top_k_gates = self.softmax(top_k_logits)
 
         zeros = torch.zeros_like(logits, requires_grad=True)
@@ -255,28 +255,39 @@ class MoE(nn.Module):
 
     def forward(self, x, loss_coef=1e-2):
         """Args:
-        x: tensor shape [batch_size, input_size]
+        x: tensor shape [batch_size, sequence, input_size]
         train: a boolean scalar.
         loss_coef: a scalar - multiplier on load-balancing losses
 
         Returns:
-        y: a tensor with shape [batch_size, output_size].
+        y: a tensor with shape [batch_size, sequence, output_size].
         extra_training_loss: a scalar.  This should be added into the overall
         training loss of the model.  The backpropagation of this loss
         encourages all experts to be approximately equally used across a batch.
         """
-        import pdb; pdb.set_trace()
+        # x: (batch, time, n_embd)
         gates, load = self.noisy_top_k_gating(x, self.training)
+        # gates: (batch, time, num_experts)
+        # load: (time, num_experts)
+
         # calculate importance loss
-        # sum over batch dimension
         importance = gates.sum(0)
-        #
+
         loss = self.cv_squared(importance) + self.cv_squared(load)
         loss *= loss_coef
 
+        batch_size, time, _ = x.size()
+        # reshape gates to (batch*time, num_experts)
+        gates = gates.view(-1, self.num_experts)
+        # reshape x to (batch*time, n_embd)
+        x = x.view(-1, x.size(-1))
         dispatcher = SparseDispatcher(self.num_experts, gates)
+        # list of num_experts tensors with shape (batch_expert_size=batch_size*expert_k, n_embd)
         expert_inputs = dispatcher.dispatch(x)
+
         gates = dispatcher.expert_to_gates()
         expert_outputs = [self.experts[i](expert_inputs[i]) for i in range(self.num_experts)]
         y = dispatcher.combine(expert_outputs)
+        # reshape y to (batch, time, n_embd)
+        y = y.view(batch_size, time, -1)
         return y, loss
