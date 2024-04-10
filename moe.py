@@ -153,7 +153,7 @@ class MoE(nn.Module):
         self.w_noise = nn.Parameter(torch.zeros(self.input_size, self.num_experts), requires_grad=True)
 
         self.softplus = nn.Softplus()
-        self.softmax = nn.Softmax(1)
+        self.softmax = nn.Softmax(dim=-1)
         self.register_buffer("mean", torch.tensor([0.0]))
         self.register_buffer("std", torch.tensor([1.0]))
         assert(self.k <= self.num_experts)
@@ -242,7 +242,7 @@ class MoE(nn.Module):
         top_logits, top_indices = logits.topk(min(self.k + 1, self.num_experts), dim=-1)
         top_k_logits = top_logits[:,:,:self.k]
         top_k_indices = top_indices[:,:,:self.k]
-        top_k_gates = self.softmax(top_k_logits, dim=-1)
+        top_k_gates = self.softmax(top_k_logits)
 
         zeros = torch.zeros_like(logits, requires_grad=True)
         gates = zeros.scatter(1, top_k_indices, top_k_gates)
