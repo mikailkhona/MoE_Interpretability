@@ -10,7 +10,7 @@ config = dotdict(config)
 batch_size = config.batch_size
 n_embd = config.n_embd
 
-
+seq_len = 2
 model = MoEGPT(config)
-x = torch.randint(100, (batch_size, 10))
+x = torch.randint(100, (batch_size, seq_len))
 model, loss = model(x)
