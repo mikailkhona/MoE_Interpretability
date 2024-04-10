@@ -19,7 +19,7 @@ init_from : 'scratch' # 'scratch' or 'resume' or 'gpt2*'
 wandb_project : 'chainofthoughtaug30'
 wandb_run_name : 'gpt2' 
 # data
-dataset_path : '/home/bizon/temp-cot/Causal_graphs_chain_of_thought/single_graph_100_nodes_p_925/'
+dataset_path : 'single_graph_n200_p95_frac02/'
 vocab_size : 100
 gradient_accumulation_steps : 1 #40 # used to simulate larger batch sizes
 batch_size : 64 # if gradient_accumulation_steps > 1, this is the micro-batch size

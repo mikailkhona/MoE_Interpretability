@@ -20,7 +20,7 @@ else:
 
 # HYDRA_FULL_ERROR=1
 
-@hydra.main(config_path="./configs", config_name="config_nanogpt_test.yaml")
+@hydra.main(config_path="./configs", config_name="test_config.yaml")
 def main(cfg):
 
     # Initialize wandb project
