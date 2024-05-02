@@ -14,7 +14,7 @@ def test_noisy_topk():
     batch_size = 10
     seq_len = 2
 
-    k = 3
+    k = 2
     config.expert_k = k
 
     moe = MoE(config)

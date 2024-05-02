@@ -511,10 +511,10 @@ if __name__ == '__main__':
 
 
     ### Save everything
-    np.save('tokens_path_train_cot.npy',np.array(list_of_tokens_train_cot))
-    np.save('tokens_path_eval_cot.npy',np.array(list_of_tokens_eval_cot))
-    np.save('tokens_path_train_direct.npy',np.array(list_of_tokens_train_direct))
-    np.save('tokens_path_eval_direct.npy',np.array(list_of_tokens_eval_direct))
+    np.save('tokens_path_train.npy',np.array(list_of_tokens_train_cot))
+    np.save('tokens_path_eval.npy',np.array(list_of_tokens_eval_cot))
+    # np.save('tokens_path_train_direct.npy',np.array(list_of_tokens_train_direct))
+    # np.save('tokens_path_eval_direct.npy',np.array(list_of_tokens_eval_direct))
 
     G = graph_dag
 
