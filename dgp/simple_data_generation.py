@@ -80,8 +80,8 @@ def check_eval_nodes_in_training(list_of_tokens_eval, list_of_tokens_train):
         print("All nodes in the evaluation set are present in the training set.")
 
 if __name__ == '__main__':
-    num_nodes = 10
-    p = 0.5
+    num_nodes = 100
+    p = 0.9
     path_length_threshold = 2
     frac = 0.2
     graph_type = 'random'

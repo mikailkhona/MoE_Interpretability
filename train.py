@@ -72,9 +72,9 @@ def main(cfg):
 
     # Load DAG and token_map to check paths:
     path = cfg.dataset_path 
-    scm_file_path = path + 'random_frozen_scm_used.npz'
+    scm_file_path = path + 'graph_path.npz'
     scm_dict = np.load(scm_file_path, allow_pickle=True)
-    with open(path + 'dag_path_scm.pkl', "rb") as f:
+    with open(path + 'dag_path.pkl', "rb") as f:
         dag =  pickle.load(f)
     token_map = scm_dict['token_map'].item()
 
@@ -183,7 +183,7 @@ def main(cfg):
     running_mfu = -1.0
 
     print('Train loop started')
-
+   
     while True:
 
         # determine and set the learning rate for this iteration
@@ -222,7 +222,7 @@ def main(cfg):
                 edge_accuracies, does_end_at_targets, path_lengths = check_generated_path_accuracy(dag, generated_paths, token_map)
                 edge_accuracies[np.isnan(edge_accuracies)] = 0
 
-                expert_load = model.transformer.blocks[0].mlp.load.detach().cpu().numpy()
+                expert_load = model.transformer.h[0].mlp.load.detach().cpu().numpy()
                 print("expert load", expert_load)
                 wandb.log({
                     "iter": iter_num,
