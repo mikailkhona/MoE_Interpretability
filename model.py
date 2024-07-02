@@ -153,7 +153,7 @@ class Block(nn.Module):
 
 class MoEBlock(nn.Module):
     '''
-    One self-attention block
+    One self-attention block using MoE instead off fully connected MLP
     '''
     
     def __init__(self, config):
@@ -161,15 +161,15 @@ class MoEBlock(nn.Module):
         self.ln_1 = LayerNorm(config.n_embd, bias=config.bias)
         self.attn = CausalSelfAttention(config)
         self.ln_2 = LayerNorm(config.n_embd, bias=config.bias)
-        self.mlp = MoE(config) 
+        self.moe = MoE(config) 
     def forward(self, x):
         '''
         Add to residual stream after self-attention and MLP.
         '''
 
         x = x + self.attn(self.ln_1(x))
-        mlp_output, aux_loss = self.mlp(self.ln_2(x))
-        x = x + mlp_output
+        moe_output, aux_loss = self.moe(self.ln_2(x))
+        x = x + moe_output
         return x, aux_loss
 
 class IdentityLinear(nn.Linear):
