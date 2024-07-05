@@ -47,8 +47,8 @@ class CausalGraphicalModel:
         # to find nodes with no children (bottommost nodes)
         self.no_children = [node for node, degree in self.dag.out_degree() if degree == 0]
 
-        if(contains_cycle(edges)==False):
-          self.topologicalsort = list(nx.topological_sort(self.dag))
+        if not contains_cycle(edges):
+            self.topologicalsort = list(nx.topological_sort(self.dag))
 
         # Add latent connections to the graph
         self.observed_variables = frozenset(nodes)
