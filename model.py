@@ -15,7 +15,6 @@ import torch
 import torch.nn as nn
 from torch.nn import functional as F
 from einops import rearrange
-from typing import List, Optional, Tuple
 
 from moe import MoE
 

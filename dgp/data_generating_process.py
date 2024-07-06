@@ -128,7 +128,7 @@ if __name__ == '__main__':
     list_of_tokens_train = [[token_idx_map[element] for element in sublist] for sublist in train_paths]
     print(len(list_of_tokens_train))
 
-    # Make sure train and eval have all node names and same tokens
+    # Make sure train and eval have all node names and same tokens -- not working now!
     assert set(flat_eval_paths).issubset(set(flat_train_paths))
     list_of_tokens_eval = [[token_idx_map[element] for element in sublist] for sublist in eval_paths]
 

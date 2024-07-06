@@ -21,19 +21,15 @@ def get_named_edges(node_names, A):
     return edge_list
 
 
-def get_simple_paths_lengths(G):
+def get_simple_paths(G):
     path_dict = {}
-    path_length_dict = {}
+    # path_length_dict = {} # not used for now
     for source in G.nodes:
         for target in G.nodes:
-            if source != target:
-                for path in nx.all_simple_paths(G, source, target, cutoff=None):
-                    if (source, target) not in path_dict:
-                        path_dict[(source, target)] = []
-                        path_length_dict[(source, target)] = []
-                    path_dict[(source, target)].append(list(path))
-                    path_length_dict[(source, target)].append(len(path))
-    return path_dict, path_length_dict
+            if source != target and nx.has_path(G, source, target):
+                path_dict[(source,target)] = list(nx.all_simple_paths(G, source, target))
+                # path_length_dict[(source,target)] = [len(path) for path in path_dict[(source,target)]]
+    return path_dict
 
 
 class CausalGraphicalModel:
@@ -58,17 +54,18 @@ def create_random_DAG(num_nodes, p):
         edge_list = get_named_edges(node_names, A)
         graph_cgm = CausalGraphicalModel(node_names, edge_list)
 
-    path_dict, path_length_dict = get_simple_paths_lengths(graph_cgm.dag)
-    return graph_cgm, graph_cgm.dag, path_dict, path_length_dict
+    path_dict = get_simple_paths(graph_cgm.dag)
+    return graph_cgm, graph_cgm.dag, path_dict
 
 
 def pad_nested_list(nested_list):
+    """Make each sequence in a nested list the same length by padding with zeros."""
     max_length = max(len(sublist) for sublist in nested_list)
     padded_list = [sublist + [0] * (max_length - len(sublist)) for sublist in nested_list]
     return padded_list
 
 
-def check_eval_nodes_in_training(eval_tokens, train_tokens):
+def check_eval_nodes_in_train(eval_tokens, train_tokens):
     eval_nodes = set(token for seq in eval_tokens for token in seq)
     train_nodes = set(token for seq in train_tokens for token in seq)
 
@@ -82,39 +79,31 @@ def check_eval_nodes_in_training(eval_tokens, train_tokens):
 def generate_graph_data(num_graphs=1, num_nodes=100, p=0.9, path_length_threshold=2, frac=0.2):
     global_token_map = {}
     global_token_idx_map = {}
-    all_training_paths = []
+    all_train_paths = []
     all_eval_paths = []
-    graph_dags = {}
+    dags = {}
 
     for graph_idx in range(num_graphs):
         print(f"Creating graph {graph_idx + 1}/{num_graphs}")
-        graph_cgm, graph_dag, path_dict, path_length_dict = create_random_DAG(num_nodes=num_nodes, p=p)
+        graph_cgm, dag, path_dict_no_prompt = create_random_DAG(num_nodes=num_nodes, p=p)
 
-        path_dict_cot = {}
-        path_length_dict_cot = {}
+        # Insert prompt and end tokens, and sort by the shortest paths
+        path_dict = {}
+        for node_pair, paths in path_dict_no_prompt.items():
+            for path in paths:
+                path_w_tokens = ['target', path[-1]] + path[:] + ['path', '###']
+                path_dict.setdefault(node_pair, []).append(path_w_tokens)
+            path_dict[node_pair].sort(key=len)
 
-        for source in graph_dag.nodes:
-            for target in graph_dag.nodes:
-                if source != target and nx.has_path(graph_dag, source, target):
-                    for path in nx.all_simple_paths(graph_dag, source, target, cutoff=None):
-                        path.insert(0, list(path)[-1])
-                        path.insert(0, 'target')
-                        path.append('path')
-                        path.append('###')
-                        if (source, target) not in path_dict_cot:
-                            path_dict_cot[(source, target)] = []
-                            path_length_dict_cot[(source, target)] = []
-                        path_dict_cot[(source, target)].append(list(path))
-                        path_length_dict_cot[(source, target)].append(len(path) - 4)
-
-        edge_pairs = [key for key, value in path_length_dict_cot.items() if any(length == path_length_threshold for length in value)]
-        node_pairs_exceeding_threshold = [key for key, value in path_length_dict_cot.items() if any(length > path_length_threshold for length in value)]
+        node_pairs_exceeding_threshold = [pair for pair, paths in path_dict.items() if any(len(path) > path_length_threshold for path in paths)]
 
         num_paths = int(frac * len(node_pairs_exceeding_threshold))
         chosen_node_pairs = random.sample(node_pairs_exceeding_threshold, num_paths)
         held_out_node_pairs = [t for t in node_pairs_exceeding_threshold if t not in chosen_node_pairs]
 
         all_nodes = set(node for node_pair in node_pairs_exceeding_threshold for node in node_pair)
+        
+        # If a node is not in any of the chosen (train) node pairs, transfer a corresponding node pair from held out (eval)
         for node in all_nodes:
             if not any(node in node_pair for node_pair in chosen_node_pairs):
                 for node_pair in held_out_node_pairs:
@@ -123,42 +112,42 @@ def generate_graph_data(num_graphs=1, num_nodes=100, p=0.9, path_length_threshol
                         held_out_node_pairs.remove(node_pair)
                         break
 
-        training_paths = [path for node_pair in chosen_node_pairs for path in path_dict_cot.get(node_pair, [])]
-        eval_paths = [path for node_pair in held_out_node_pairs for path in path_dict_cot.get(node_pair, [])]
+        train_paths = [path for node_pair in chosen_node_pairs for path in path_dict.get(node_pair, [])]
+        eval_paths = [path for node_pair in held_out_node_pairs for path in path_dict.get(node_pair, [])]
 
-        for paths in training_paths + eval_paths:
+        for paths in train_paths + eval_paths:
             for token in paths:
                 if token not in global_token_idx_map:
                     idx = len(global_token_map)
                     global_token_map[idx] = token
                     global_token_idx_map[token] = idx
 
-        graph_dags[graph_idx] = graph_dag
+        dags[graph_idx] = dag
 
-        tokenized_train_paths = [[global_token_idx_map[token] for token in path] for path in training_paths]
+        tokenized_train_paths = [[global_token_idx_map[token] for token in path] for path in train_paths]
         tokenized_eval_paths = [[global_token_idx_map[token] for token in path] for path in eval_paths]
 
-        all_training_paths.extend(tokenized_train_paths)
+        all_train_paths.extend(tokenized_train_paths)
         all_eval_paths.extend(tokenized_eval_paths)
 
-    all_training_paths = pad_nested_list(all_training_paths)
+    all_train_paths = pad_nested_list(all_train_paths)
     all_eval_paths = pad_nested_list(all_eval_paths)
 
-    np.save('data/tokens_path_train.npy', np.array(all_training_paths))
+    np.save('data/tokens_path_train.npy', np.array(all_train_paths))
     np.save('data/tokens_path_eval.npy', np.array(all_eval_paths))
 
     with open("data/dag_path.pkl", "wb") as f:
-        pickle.dump(graph_dags, f)
+        pickle.dump(dags, f)
 
     np.savez("data/graph_path.npz", token_map=global_token_map, token_idx_map=global_token_idx_map)
 
-    check_eval_nodes_in_training(all_eval_paths, all_training_paths)
+    check_eval_nodes_in_train(all_eval_paths, all_train_paths)
 
 
 if __name__ == '__main__':
     num_graphs = 3
     num_nodes = 100
-    p = 0.9
-    path_length_threshold = 2
-    frac = 0.2
+    p = 0.9 # probability of each pair of nodes being connected
+    path_length_threshold = 2 # only paths with more than this many nodes considered
+    frac = 0.2 # approx fraction of paths held out for validation
     generate_graph_data(num_graphs=num_graphs, num_nodes=num_nodes, p=p, path_length_threshold=path_length_threshold, frac=frac)
