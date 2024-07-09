@@ -34,10 +34,10 @@ def open_log(cfg):
         print(cfg)
         return fout
 
-def init_wandb(cfg, project_name):
+def init_wandb(cfg):
     if cfg.deploy:
         print('Initializing wandb project')
-        wandb.init(project=project_name)
+        wandb.init(project=cfg.wandb_project)
         wandb.run.name = wandb.run.id
         wandb.run.save()
         wandb.config.update(OmegaConf.to_container(cfg))

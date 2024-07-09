@@ -16,8 +16,8 @@ always_save_checkpoint : True # if True, always save a checkpoint after each eva
 init_from : 'scratch' # 'scratch' or 'resume' or 'gpt2*'
 # wandb logging
 # wandb_log = False # disabled by default
-wandb_project : 'chainofthoughtaug30'
-wandb_run_name : 'gpt2' 
+wandb_project : 'MoE'
+wandb_run_name : 'test' 
 # data
 dataset_path : 'data/'
 vocab_size : 100
@@ -25,7 +25,7 @@ gradient_accumulation_steps : 1 #40 # used to simulate larger batch sizes
 batch_size : 64 # if gradient_accumulation_steps > 1, this is the micro-batch size
 # model parameters
 block_size : 128
-n_layer : 2
+n_layer : 1
 n_head : 1
 n_embd : 64
 num_experts: 8

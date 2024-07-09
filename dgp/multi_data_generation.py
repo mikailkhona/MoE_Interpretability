@@ -77,6 +77,21 @@ def check_eval_nodes_in_train(eval_tokens, train_tokens):
 
 
 def generate_graph_data(num_graphs=1, num_nodes=100, p=0.9, path_length_threshold=2, frac=0.2):
+    """
+    Generate DAGs, create training and validation datasets of paths through the different graphs, 
+    and tokenize in the nodes. Save everything.
+
+    Args:
+        num_graphs (int): The number of graphs to generate.
+        num_nodes (int): The number of nodes in each graph. 
+        p (float): The probability of an edge existing between two nodes. 
+        path_length_threshold (int): If a path length is less than this, the path is not considered. 
+        frac (float): The rough fraction of the dataset chosen for validation. Default is 0.2.
+
+    Returns:
+        None
+    """
+
     global_token_map = {}
     global_token_idx_map = {}
     all_train_paths = []
@@ -147,7 +162,7 @@ def generate_graph_data(num_graphs=1, num_nodes=100, p=0.9, path_length_threshol
 if __name__ == '__main__':
     num_graphs = 3
     num_nodes = 100
-    p = 0.9 # probability of each pair of nodes being connected
+    p = 0.92 # probability of each pair of nodes being connected
     path_length_threshold = 2 # only paths with more than this many nodes considered
     frac = 0.2 # approx fraction of paths held out for validation
     generate_graph_data(num_graphs=num_graphs, num_nodes=num_nodes, p=p, path_length_threshold=path_length_threshold, frac=frac)

@@ -5,12 +5,10 @@ import pickle
 from contextlib import nullcontext
 import numpy as np
 import torch
-from torch.distributed import init_process_group, destroy_process_group
 import wandb
 from model import GPTConfig, GPT, MoEGPT
 import hydra
-from utils import get_dataloader, get_dataloader_lol, dotdict, get_cosine_warmp_lr, check_generated_path_accuracy
-import pdb
+from utils import get_dataloader_lol, get_cosine_warmp_lr, check_generated_path_accuracy
 from init import set_seed, open_log, init_wandb, cleanup
 
 if torch.cuda.is_available():
@@ -18,31 +16,34 @@ if torch.cuda.is_available():
 else:
     dtype = 'None'
 
-@hydra.main(config_path="./configs", config_name="test_config.yaml")
+@hydra.main(version_base=None,config_path="./configs", config_name="test_config.yaml")
 def main(cfg):
-    init_wandb(cfg, cfg.wandb_project)
+    init_wandb(cfg)
     set_seed(cfg.seed)
     fp = open_log(cfg)
     device = cfg.device
-    tokens_per_iter = cfg.gradient_accumulation_steps * cfg.batch_size * cfg.block_size
-    tokens_per_iter = int(tokens_per_iter)
+    tokens_per_iter = int(cfg.gradient_accumulation_steps * cfg.batch_size * cfg.block_size)
     print(f"tokens per iteration will be: {tokens_per_iter:,}")
     os.makedirs(cfg.out_dir, exist_ok=True)
 
-    torch.manual_seed(1337)
-    torch.backends.cuda.matmul.allow_tf32 = True
-    torch.backends.cudnn.allow_tf32 = True
-    device_type = 'cuda' if 'cuda' in device else 'cpu'
+    # torch.manual_seed(1337) # didn't we already set the seed?
+    if 'cuda' in device:
+        device_type = 'cuda'
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
+    else:
+        device_type = 'cpu'
     ptdtype = {'float32': torch.float32, 'bfloat16': torch.bfloat16, 'float16': torch.float16, 'None': torch.float32}[dtype]
     ctx = nullcontext() if device_type == 'cpu' else torch.amp.autocast(device_type=device_type, dtype=ptdtype)
 
     iter_num = 0
     best_val_loss = 1e9
     
-    data_dir_train = cfg.dataset_path + 'tokens_path_train.npy'
-    data_dir_eval = cfg.dataset_path + 'tokens_path_eval.npy'
+    path = cfg.dataset_path
+    data_dir_train = path + 'tokens_path_train.npy'
+    data_dir_eval = path + 'tokens_path_eval.npy'
     data = np.load(data_dir_train, allow_pickle=True)
-    flattened_data = [element for sublist in data for element in sublist]
+    flattened_data = [token for path in data for token in path]
     meta_vocab_size = len(list(set(flattened_data)))
 
     train_dataloader, val_dataloader = get_dataloader_lol(train_data_path=data_dir_train, val_data_path=data_dir_eval, batch_size=cfg.batch_size, num_workers=1)
@@ -51,7 +52,6 @@ def main(cfg):
         dataloader = train_dataloader if split == 'train' else val_dataloader
         return dataloader
 
-    path = cfg.dataset_path
     scm_file_path = path + 'graph_path.npz'
     scm_dict = np.load(scm_file_path, allow_pickle=True)
     with open(path + 'dag_path.pkl', "rb") as f:
@@ -89,7 +89,7 @@ def main(cfg):
         model_args['block_size'] = cfg.block_size
     model.to(device)
 
-    scaler = torch.cuda.amp.GradScaler(enabled=(dtype == 'float16'))
+    scaler = torch.GradScaler(device_type, enabled=(dtype == 'float16')) if device_type == 'cuda' else None
     optimizer = model.configure_optimizers(optimizer=cfg.optimizer, weight_decay=cfg.weight_decay, learning_rate=cfg.learning_rate, betas=(cfg.beta1, cfg.beta2), device_type=device_type)
     if cfg.init_from == 'resume':
         optimizer.load_state_dict(checkpoint['optimizer'])
@@ -247,6 +247,8 @@ def main(cfg):
 
         if iter_num > cfg.max_iters:
             break
+
+    cleanup(cfg, fp)
 
 if __name__ == "__main__":
     main()

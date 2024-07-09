@@ -1,7 +1,10 @@
 graphviz
 networkx 
 numpy
+scipy
 pandas
 torch
 hydra-core
 wandb
+yaml
+einops
