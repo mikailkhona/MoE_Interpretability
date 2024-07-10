@@ -1,3 +1,4 @@
+from string import ascii_uppercase
 import numpy as np
 import networkx as nx
 import random
@@ -43,8 +44,8 @@ class CausalGraphicalModel:
         self.no_children = [node for node in self.dag.nodes() if self.dag.out_degree(node) == 0]
 
 
-def create_random_DAG(num_nodes, p):
-    node_names = ['X' + str(i) for i in range(num_nodes)]
+def create_random_DAG(num_nodes, p, name='X'):
+    node_names = [name + str(i) for i in range(num_nodes)]
     A = create_upper_triangular_mask(num_nodes, p=p)
     edge_list = get_named_edges(node_names, A)
     graph_cgm = CausalGraphicalModel(node_names, edge_list)
@@ -100,7 +101,7 @@ def generate_graph_data(num_graphs=1, num_nodes=100, p=0.9, path_length_threshol
 
     for graph_idx in range(num_graphs):
         print(f"Creating graph {graph_idx + 1}/{num_graphs}")
-        graph_cgm, dag, path_dict_no_prompt = create_random_DAG(num_nodes=num_nodes, p=p)
+        graph_cgm, dag, path_dict_no_prompt = create_random_DAG(num_nodes=num_nodes, p=p, name=ascii_uppercase[graph_idx])
 
         # Insert prompt and end tokens, and sort by the shortest paths
         path_dict = {}

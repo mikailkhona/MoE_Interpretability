@@ -1,13 +1,8 @@
-import scipy
-import random
+from string import ascii_uppercase
 import numpy as np
 import torch
-import os
 from torch.utils.data import Dataset, DataLoader
-import torch.nn as nn
 import torch
-import random
-from typing import Any, Callable, Dict, List, Tuple, Union
 import math
 from torch.nn.utils.rnn import pad_sequence
 
@@ -164,12 +159,12 @@ def get_dataloader_lol(train_data_path, val_data_path, batch_size, shuffle=True,
     return train_dataloader, val_dataloader
 
 
-def check_edge_accuracy(G, nodes, start_index, stop_index):
+def check_edge_accuracy(dag_dict, nodes, start_index, stop_index):
     """
-    Check whether every edge in nodes (defined by pairs of successive nodes) is an actual edge in the graph G.
+    Check whether every edge in nodes (defined by pairs of successive nodes) is an actual edge in the relevant graph within dag_dict.
 
     Parameters:
-    - G (networkx.DiGraph): A directed acyclic graph.
+    - dag_dict (dict): Dictionary of nx.DiGraph objects.
     - nodes (list): List of node names supposed to form a simple path.
 
     Returns:
@@ -177,14 +172,15 @@ def check_edge_accuracy(G, nodes, start_index, stop_index):
     """
     edge_bools = []
     edge_list = []
+    graph_idx = ascii_uppercase.index(nodes[2][0]) # graph idx is indicated by the node letter: 1 for A, 2 for B, etc.
     for i in range(start_index, stop_index-1):
-        edge_bools.append(G.has_edge(nodes[i], nodes[i + 1]))
+        edge_bools.append(dag_dict[graph_idx].has_edge(nodes[i], nodes[i + 1]))
         edge_list.append((nodes[i], nodes[i + 1]))
 
     does_end_at_target = (nodes[1]==nodes[stop_index-1])
     return np.array(edge_bools), edge_list, does_end_at_target
 
-def check_generated_path_accuracy(dag, generated_tokens, token_map):
+def check_generated_path_accuracy(dag_dict, generated_tokens, token_map):
 
     num_samples = len(generated_tokens)
     batch_size = len(generated_tokens[0])
@@ -203,7 +199,7 @@ def check_generated_path_accuracy(dag, generated_tokens, token_map):
                 stop_index = len(nodes)
             else:
                 stop_index = stop_token_indices[0]
-            edge_bools, edge_list, does_end_at_target = check_edge_accuracy(dag, nodes, start_index=2, stop_index=stop_index)
+            edge_bools, edge_list, does_end_at_target = check_edge_accuracy(dag_dict, nodes, start_index=2, stop_index=stop_index)
             accuracies[j,i] = np.mean(edge_bools)
             does_end_at_targets[j,i] = does_end_at_target
             path_lengths[j,i] = len(edge_list)
