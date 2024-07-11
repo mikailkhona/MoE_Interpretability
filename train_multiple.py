@@ -136,7 +136,7 @@ def main(cfg):
 
     print('Train loop started')
     
-    expert_activations = {graph_idx: np.zeros(cfg.num_experts) for graph_idx in range(num_graphs)}
+    # expert_activations = {graph_idx: np.zeros(cfg.num_experts) for graph_idx in range(num_graphs)}
     
     while True:
         lr = get_cosine_warmp_lr(iter_num, cfg.learning_rate, cfg.warmup_iters, cfg.lr_decay_iters, cfg.min_lr) if cfg.decay_lr else cfg.learning_rate
@@ -165,7 +165,7 @@ def main(cfg):
                 edge_accuracies, does_end_at_targets, path_lengths = check_generated_path_accuracy(dag_dict, generated_paths, token_map)
                 edge_accuracies[np.isnan(edge_accuracies)] = 0
 
-                expert_load = model.transformer.h[0].mlp.load.detach().cpu().numpy()
+                expert_load = model.transformer.h[0].moe.load.detach().cpu().numpy()
                 print("expert load", expert_load)
                 wandb.log({
                     "iter": iter_num,
@@ -179,11 +179,11 @@ def main(cfg):
                 })
 
                 # Log the expert activations for each graph to wandb
-                for graph_idx in range(num_graphs):
-                    wandb.log({f"expert_activations/graph_{graph_idx}": expert_activations[graph_idx]}, step=iter_num)
+                # for graph_idx in range(num_graphs):
+                #     wandb.log({f"expert_activations/graph_{graph_idx}": expert_activations[graph_idx]}, step=iter_num)
 
                 # Reset the expert activations for the next interval
-                expert_activations = {graph_idx: np.zeros(cfg.num_experts) for graph_idx in range(num_graphs)}
+                # expert_activations = {graph_idx: np.zeros(cfg.num_experts) for graph_idx in range(num_graphs)}
 
             if losses['val'] < best_val_loss or cfg.always_save_checkpoint:
                 best_val_loss = losses['val']
@@ -209,14 +209,14 @@ def main(cfg):
                 loss = loss / cfg.gradient_accumulation_steps
 
             # Get the graph indices from the current batch
-            graph_indices = X[:, 1, 0].cpu().numpy()  # Assuming the second token in each sequence represents the graph index
+            # graph_indices = X[:, 1, 0].cpu().numpy()  # Assuming the second token in each sequence represents the graph index
 
-            # Extract the expert activations from the model
-            expert_acts = model.transformer.h[0].mlp.expert_act.detach().cpu().numpy()
+            # Extract the expert activations from the model -- expert_act to implement
+            # expert_acts = model.transformer.h[0].moe.expert_act.detach().cpu().numpy()
 
             # Update the expert activations for each graph
-            for graph_idx, expert_act in zip(graph_indices, expert_acts):
-                expert_activations[graph_idx] += expert_act
+            # for graph_idx, expert_act in zip(graph_indices, expert_acts):
+            #     expert_activations[graph_idx] += expert_act
 
             try:
                 X, Y = next(dataloader)
