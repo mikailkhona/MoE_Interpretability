@@ -1,6 +1,4 @@
 import os
-import time
-import math
 import pickle
 from contextlib import nullcontext
 import numpy as np
@@ -11,10 +9,12 @@ import hydra
 from utils import get_dataloader_lol, get_cosine_warmp_lr, check_generated_path_accuracy
 from init import set_seed, open_log, init_wandb, cleanup
 
-if torch.cuda.is_available():
-    dtype = 'bfloat16' if torch.cuda.is_bf16_supported() else 'float16'
-else:
-    dtype = 'None'
+dtype = 'float32' #scatterMoE only has float32 support
+
+# if torch.cuda.is_available():
+#     dtype = 'bfloat16' if torch.cuda.is_bf16_supported() else 'float16'
+# else:
+#     dtype = 'None'
 
 @hydra.main(version_base=None,config_path="./configs", config_name="test_config.yaml")
 def main(cfg):
@@ -166,7 +166,7 @@ def main(cfg):
                 edge_accuracies[np.isnan(edge_accuracies)] = 0
 
                 expert_load = model.transformer.h[0].moe.load.detach().cpu().numpy()
-                print("expert load", expert_load)
+                print("experts load", expert_load)
                 wandb.log({
                     "iter": iter_num,
                     "train/loss": losses['train'],

@@ -16,7 +16,7 @@ import torch.nn as nn
 from torch.nn import functional as F
 from einops import rearrange
 
-from moe import MoE
+import scattermoe
 
 @dataclass
 class GPTConfig:
@@ -129,6 +129,45 @@ class MLP(nn.Module):
         x = self.dropout(x)
         return x
 
+class MoE(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.n_embd = config.n_embd
+        self.hidden_size = 4*config.n_embd
+        self.num_experts = config.num_experts
+        self.k = config.expert_k
+
+        # gating
+        self.gate = nn.Linear(self.n_embd, self.num_experts, bias=False)
+
+        self.moe_mlp = scattermoe.mlp.MLP(
+            input_size=self.n_embd,
+            hidden_size=self.hidden_size,
+            num_experts=self.num_experts,
+            top_k=self.k,
+            activation= nn.GELU()
+        )
+
+    def forward(self, hidden_states: torch.Tensor):
+        batch_size, sequence_length, n_embd = hidden_states.shape
+        hidden_states = hidden_states.view(-1, n_embd)
+        # router_logits: (batch * sequence_length, n_experts)
+        router_logits = self.gate(hidden_states)
+
+        routing_weights = F.softmax(router_logits, dim=1, dtype=torch.float32)
+        # both routing_weights, selected_experts: (batch * sequence_length, k)
+        routing_weights, selected_experts = torch.topk(routing_weights, self.k, dim=-1)
+        routing_weights /= routing_weights.sum(dim=-1, keepdim=True)
+        
+        # count the times each expert is selected.
+        self.load = F.one_hot(selected_experts, num_classes=self.num_experts).sum(dim=0)
+
+        # we cast back to the input dtype
+        routing_weights = routing_weights.to(hidden_states.dtype)
+        final_hidden_states = self.moe_mlp(hidden_states, routing_weights, selected_experts)
+        final_hidden_states = final_hidden_states.view(batch_size, sequence_length, n_embd)
+        return final_hidden_states, router_logits
+
 class Block(nn.Module):
     '''
     One self-attention block
@@ -167,9 +206,9 @@ class MoEBlock(nn.Module):
         '''
 
         x = x + self.attn(self.ln_1(x))
-        moe_output, aux_loss = self.moe(self.ln_2(x))
+        moe_output, router_logits = self.moe(self.ln_2(x))
         x = x + moe_output
-        return x, aux_loss
+        return x, router_logits
 
 class IdentityLinear(nn.Linear):
     def __init__(self, features):
@@ -177,6 +216,51 @@ class IdentityLinear(nn.Linear):
         self.weight.data = torch.eye(features)
         self.bias.data = torch.zeros(features)
 
+def load_balancing_loss_func(gate_logits: torch.Tensor, num_experts: torch.Tensor = None, top_k=1) -> float:
+    r"""
+    Computes auxiliary load balancing loss as in Switch Transformer - implemented in Pytorch.
+
+    See Switch Transformer (https://arxiv.org/abs/2101.03961) for more details. This function implements the loss
+    function presented in equations (4) - (6) of the paper. It aims at penalizing cases where the routing between
+    experts is too unbalanced.
+
+    Args:
+        gate_logits (Union[`torch.Tensor`, Tuple[torch.Tensor]):
+            Logits from the `gate`, should be a tuple of tensors. Shape: [batch_size, seqeunce_length, num_experts].
+        num_experts (`int`, *optional*):
+            Number of experts
+
+    Returns:
+        The auxiliary loss.
+    """
+    if gate_logits is None:
+        return 0
+
+    if isinstance(gate_logits, tuple):
+        # cat along the layers?
+        gate_logits = torch.cat(gate_logits, dim=0)
+
+    routing_weights, selected_experts = torch.topk(gate_logits, top_k, dim=-1)
+    routing_weights = routing_weights.softmax(dim=-1)
+
+    # cast the expert indices to int64, otherwise one-hot encoding will fail
+    if selected_experts.dtype != torch.int64:
+        selected_experts = selected_experts.to(torch.int64)
+
+    if len(selected_experts.shape) == 2:
+        selected_experts = selected_experts.unsqueeze(2)
+
+    expert_mask = torch.nn.functional.one_hot(selected_experts, num_experts)
+
+    # For a given token, determine if it was routed to a given expert.
+    expert_mask = torch.max(expert_mask, axis=-2).values
+
+    # cast to float32 otherwise mean will fail
+    expert_mask = expert_mask.to(torch.float32)
+    tokens_per_group_and_expert = torch.mean(expert_mask, axis=-2)
+
+    router_prob_per_group_and_expert = torch.mean(routing_weights, axis=-1)
+    return torch.mean(tokens_per_group_and_expert * router_prob_per_group_and_expert.unsqueeze(-1)) * (num_experts**2)
    
 class MoEGPT(nn.Module):
 
@@ -250,14 +334,15 @@ class MoEGPT(nn.Module):
         tok_emb = self.transformer.wte(idx) # token embeddings of shape (b, t, n_embd)
         pos_emb = self.transformer.wpe(pos) # position embeddings of shape (t, n_embd)
         x = self.transformer.drop(tok_emb + pos_emb)
-        for block in self.transformer.h:
-            x, aux_loss = block(x)
+        for moe_block in self.transformer.h:
+            x, router_logits = moe_block(x)
         x = self.transformer.ln_f(x)
 
         if targets is not None:
             # if we are given some desired targets also calculate the loss
             logits = self.LM_head(x)
             loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=0)
+            loss += load_balancing_loss_func(router_logits, num_experts=self.config.num_experts, top_k=self.config.expert_k)
         else:
             # inference-time mini-optimization: only forward the LM_head on the very last position
             logits = self.LM_head(x[:, [-1], :]) # note: using list [-1] to preserve the time dim
@@ -370,7 +455,6 @@ class MoEGPT(nn.Module):
             idx = torch.cat((idx, idx_next), dim=1)
 
         return idx
-
 
 class GPT(nn.Module):
 
