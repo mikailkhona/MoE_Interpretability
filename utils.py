@@ -1,13 +1,58 @@
-from string import ascii_uppercase
 import numpy as np
+from string import ascii_uppercase
 import torch
 from torch.utils.data import Dataset, DataLoader
-import torch
-import math
 from torch.nn.utils.rnn import pad_sequence
+import wandb
+import random
+import os
+import sys
 
+from omegaconf import OmegaConf
 
-# learning rate decay scheduler (cosine with warmup)
+## INIT STUFF
+
+def set_seed(seed=0):
+    """
+    Don't set true seed to be nearby values. Doesn't give best randomness
+    """
+    rng = np.random.default_rng(seed)
+    true_seed = int(rng.integers(2**30))
+
+    random.seed(true_seed)
+    np.random.seed(true_seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    torch.manual_seed(true_seed)
+    torch.cuda.manual_seed_all(true_seed)
+
+def open_log(cfg):
+    print(cfg)
+    os.makedirs('logs/' + cfg.tag, exist_ok=True)
+    if cfg.deploy:
+        # Open log file
+        fname = 'logs/' + cfg.tag + '/' + wandb.run.id + ".log"
+        fout = open(fname, "a", 1)
+        sys.stdout = fout
+        sys.stderr = fout
+        print(cfg)
+        # Initialize wandb
+        print('Initializing wandb project')
+        wandb.init(project=cfg.wandb_project)
+        wandb.run.name = wandb.run.id
+        wandb.run.save()
+        wandb.config.update(OmegaConf.to_container(cfg))
+        return fout
+
+# Close log file and clean up
+def cleanup(cfg, fp):
+    if cfg.deploy:
+        fp.close()
+        sys.stdout = sys.__stdout__
+        sys.stderr = sys.__stderr__
+        wandb.finish()
+
+# Learning rate decay scheduler (cosine with warmup)
 def get_cosine_warmp_lr(it, learning_rate, warmup_iters, lr_decay_iters, min_lr):
     '''
     Return lr for it'th step
@@ -22,7 +67,7 @@ def get_cosine_warmp_lr(it, learning_rate, warmup_iters, lr_decay_iters, min_lr)
     # 3) in between, use cosine decay down to min learning rate
     decay_ratio = (it - warmup_iters) / (lr_decay_iters - warmup_iters)
     assert 0 <= decay_ratio <= 1
-    coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio)) # coeff ranges 0..1
+    coeff = 0.5 * (1.0 + np.cos(np.pi * decay_ratio)) # coeff ranges 0..1
     return min_lr + coeff * (learning_rate - min_lr)
 
 class dotdict(dict):
@@ -33,6 +78,8 @@ class dotdict(dict):
     __getattr__ = dict.get
     __setattr__ = dict.__setitem__
     __delattr__ = dict.__delitem__
+
+# Dataloader stuff
 
 def generate_batches_lol(batch_size, file_path):
     '''
@@ -158,6 +205,7 @@ def get_dataloader_lol(train_data_path, val_data_path, batch_size, shuffle=True,
 
     return train_dataloader, val_dataloader
 
+# Measuring accuracy.
 
 def check_edge_accuracy(dag_dict, nodes, start_index, stop_index):
     """
@@ -212,22 +260,3 @@ def make_prompt(source, target, token_idx_map):
   start_token = token_idx_map['target']
   prompt = torch.from_numpy(np.array([start_token + 1, target_token+1, source_token+1]))
   return prompt
-
-# class ZeroPadCollator:
-
-#     @staticmethod
-#     def collate_tensors(batch: List[torch.Tensor]) -> torch.Tensor:
-#         dims = batch[0].dim()
-#         max_size = [max([b.size(i) for b in batch]) for i in range(dims)]
-#         size = (len(batch),) + tuple(max_size)
-#         canvas = batch[0].new_zeros(size=size)
-#         for i, b in enumerate(batch):
-#             sub_tensor = canvas[i]
-#             for d in range(dims):
-#                 sub_tensor = sub_tensor.narrow(d, 0, b.size(d))
-#             sub_tensor.add_(b)
-#         return canvas
-
-#     def collate(self, batch, ) -> List[torch.Tensor]:
-#         dims = len(batch[0])
-#         return [self.collate_tensors([b[i] for b in batch]) for i in range(dims)]

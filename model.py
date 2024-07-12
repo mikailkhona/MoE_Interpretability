@@ -129,7 +129,10 @@ class MLP(nn.Module):
         x = self.dropout(x)
         return x
 
-class MoE(nn.Module):
+class scatterMoE(nn.Module):
+    """
+    ScatterMoE MLP
+    """
     def __init__(self, config):
         super().__init__()
         self.n_embd = config.n_embd
@@ -168,27 +171,6 @@ class MoE(nn.Module):
         final_hidden_states = final_hidden_states.view(batch_size, sequence_length, n_embd)
         return final_hidden_states, router_logits
 
-class Block(nn.Module):
-    '''
-    One self-attention block
-    '''
-    
-    def __init__(self, config):
-        super().__init__()
-        self.ln_1 = LayerNorm(config.n_embd, bias=config.bias)
-        self.attn = CausalSelfAttention(config)
-        self.ln_2 = LayerNorm(config.n_embd, bias=config.bias)
-        self.mlp = MLP(config)
-
-    def forward(self, x):
-        '''
-        Add to residual stream after self-attention and MLP.
-        '''
-
-        x = x + self.attn(self.ln_1(x))
-        x = x + self.mlp(self.ln_2(x))
-        return x
-
 class MoEBlock(nn.Module):
     '''
     One self-attention block using MoE instead off fully connected MLP
@@ -199,7 +181,7 @@ class MoEBlock(nn.Module):
         self.ln_1 = LayerNorm(config.n_embd, bias=config.bias)
         self.attn = CausalSelfAttention(config)
         self.ln_2 = LayerNorm(config.n_embd, bias=config.bias)
-        self.moe = MoE(config) 
+        self.moe = scatterMoE(config) 
     def forward(self, x):
         '''
         Add to residual stream after self-attention and MLP.
@@ -209,12 +191,6 @@ class MoEBlock(nn.Module):
         moe_output, router_logits = self.moe(self.ln_2(x))
         x = x + moe_output
         return x, router_logits
-
-class IdentityLinear(nn.Linear):
-    def __init__(self, features):
-        super(IdentityLinear, self).__init__(features, features)
-        self.weight.data = torch.eye(features)
-        self.bias.data = torch.zeros(features)
 
 def load_balancing_loss_func(gate_logits: torch.Tensor, num_experts: torch.Tensor = None, top_k=1) -> float:
     r"""
@@ -455,6 +431,35 @@ class MoEGPT(nn.Module):
             idx = torch.cat((idx, idx_next), dim=1)
 
         return idx
+
+# This stuff below is unrelated to MoEs
+
+class Block(nn.Module):
+    '''
+    One self-attention block
+    '''
+    
+    def __init__(self, config):
+        super().__init__()
+        self.ln_1 = LayerNorm(config.n_embd, bias=config.bias)
+        self.attn = CausalSelfAttention(config)
+        self.ln_2 = LayerNorm(config.n_embd, bias=config.bias)
+        self.mlp = MLP(config)
+
+    def forward(self, x):
+        '''
+        Add to residual stream after self-attention and MLP.
+        '''
+
+        x = x + self.attn(self.ln_1(x))
+        x = x + self.mlp(self.ln_2(x))
+        return x
+
+class IdentityLinear(nn.Linear):
+    def __init__(self, features):
+        super(IdentityLinear, self).__init__(features, features)
+        self.weight.data = torch.eye(features)
+        self.bias.data = torch.zeros(features)
 
 class GPT(nn.Module):
 

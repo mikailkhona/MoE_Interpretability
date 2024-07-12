@@ -152,17 +152,17 @@ def generate_graph_data(num_graphs=1, num_nodes=100, p=0.9, path_length_threshol
     np.save('data/tokens_path_train.npy', np.array(all_train_paths))
     np.save('data/tokens_path_eval.npy', np.array(all_eval_paths))
 
-    with open("data/dag_path.pkl", "wb") as f:
+    with open("data/dags.pkl", "wb") as f:
         pickle.dump(dags, f)
 
-    np.savez("data/graph_path.npz", token_map=global_token_map, token_idx_map=global_token_idx_map)
+    np.savez("data/token_maps.npz", token_map=global_token_map, token_idx_map=global_token_idx_map)
 
     check_eval_nodes_in_train(all_eval_paths, all_train_paths)
 
 
 if __name__ == '__main__':
     num_graphs = 3
-    num_nodes = 100
+    num_nodes = 30
     p = 0.92 # probability of each pair of nodes being connected
     path_length_threshold = 2 # only paths with more than this many nodes considered
     frac = 0.2 # approx fraction of paths held out for validation
