@@ -301,7 +301,7 @@ class MoEGPT(nn.Module):
             # if we are given some desired targets also calculate the loss
             logits = self.LM_head(x)
             loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=0)
-            loss += load_balancing_loss_func(router_logits, num_experts=self.config.num_experts, top_k=self.config.expert_k)
+            loss += self.config.aux_loss_weight*load_balancing_loss_func(router_logits, num_experts=self.config.num_experts, top_k=self.config.expert_k)
         else:
             # inference-time mini-optimization: only forward the LM_head on the very last position
             logits = self.LM_head(x[:, [-1], :]) # note: using list [-1] to preserve the time dim

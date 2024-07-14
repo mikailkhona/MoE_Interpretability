@@ -30,18 +30,18 @@ def open_log(cfg):
     print(cfg)
     os.makedirs('logs/' + cfg.tag, exist_ok=True)
     if cfg.deploy:
-        # Open log file
-        fname = 'logs/' + cfg.tag + '/' + wandb.run.id + ".log"
-        fout = open(fname, "a", 1)
-        sys.stdout = fout
-        sys.stderr = fout
-        print(cfg)
         # Initialize wandb
         print('Initializing wandb project')
         wandb.init(project=cfg.wandb_project)
         wandb.run.name = wandb.run.id
         wandb.run.save()
         wandb.config.update(OmegaConf.to_container(cfg))
+        # Open log file
+        fname = 'logs/' + cfg.tag + '/' + wandb.run.id + ".log"
+        fout = open(fname, "a", 1)
+        sys.stdout = fout
+        sys.stderr = fout
+        print(cfg)
         return fout
 
 # Close log file and clean up
@@ -229,7 +229,6 @@ def check_edge_accuracy(dag_dict, nodes, start_index, stop_index):
     return np.array(edge_bools), edge_list, does_end_at_target
 
 def check_generated_path_accuracy(dag_dict, generated_tokens, token_map):
-
     num_samples = len(generated_tokens)
     batch_size = len(generated_tokens[0])
 
@@ -240,7 +239,7 @@ def check_generated_path_accuracy(dag_dict, generated_tokens, token_map):
         for i in range(batch_size):
             tokens = generated_tokens[j][i].cpu().numpy()
             nodes = [token_map[token.item() - 1] for token in tokens if token.item() != 0]
-            stop_token_indices = np.where(np.array(nodes) == 'path')[0] # first instance of ###
+            stop_token_indices = np.where(np.array(nodes) == 'path')[0] # first instance of 'path' EOS token
             if stop_token_indices.shape[0] == 0:
                 stop_index = len(nodes)
             else:

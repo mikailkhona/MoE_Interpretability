@@ -169,7 +169,7 @@ def generate_graph_data(num_graphs=1, num_nodes=100, p=0.9, path_length_threshol
 
 if __name__ == '__main__':
     num_graphs = 3
-    num_nodes = 30
+    num_nodes = 100
     p = 0.92 # probability of each pair of nodes being connected
     path_length_threshold = 2 # only paths with more than this many nodes considered
     frac = 0.2 # approx fraction of paths held out for validation

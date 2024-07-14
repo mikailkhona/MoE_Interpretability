@@ -8,10 +8,11 @@ from model import GPTConfig, GPT, MoEGPT
 import hydra
 from utils import *
 
-if torch.cuda.is_available():
-    dtype = 'bfloat16' if torch.cuda.is_bf16_supported() else 'float16'
-else:
-    dtype = 'None'
+dtype = 'None'
+# if torch.cuda.is_available():
+#     dtype = 'bfloat16' if torch.cuda.is_bf16_supported() else 'float16'
+# else:
+#     dtype = 'None'
 # HYDRA_FULL_ERROR=1
 
 @hydra.main(version_base=None,config_path="./configs", config_name="test_config.yaml")
