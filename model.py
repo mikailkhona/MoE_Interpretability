@@ -18,23 +18,6 @@ from einops import rearrange
 
 import scattermoe
 
-@dataclass
-class GPTConfig:
-    '''
-    Defaults for GPT-2
-    '''
-
-    block_size: int = 1024
-    vocab_size: int = 50304 # GPT-2 vocab_size of 50257, padded up to nearest multiple of 64 for efficiency
-    n_layer: int = 12
-    n_head: int = 12
-    n_embd: int = 768
-    OneLayerAttentionOnly = False
-    TwoLayerAttentionOnly = False
-    MoELayerAttentionOnly = False
-    dropout: float = 0.0
-    bias: bool = True # True: bias in Linears and LayerNorms, like GPT-2. False: a bit better and faster
-
 class LayerNorm(nn.Module):
     """ LayerNorm but with an optional bias. PyTorch doesn't support simply bias=False """
 
@@ -460,6 +443,23 @@ class IdentityLinear(nn.Linear):
         super(IdentityLinear, self).__init__(features, features)
         self.weight.data = torch.eye(features)
         self.bias.data = torch.zeros(features)
+
+@dataclass
+class GPTConfig:
+    '''
+    Defaults for GPT-2
+    '''
+
+    block_size: int = 1024
+    vocab_size: int = 50304 # GPT-2 vocab_size of 50257, padded up to nearest multiple of 64 for efficiency
+    n_layer: int = 12
+    n_head: int = 12
+    n_embd: int = 768
+    OneLayerAttentionOnly = False
+    TwoLayerAttentionOnly = False
+    MoELayerAttentionOnly = False
+    dropout: float = 0.0
+    bias: bool = True # True: bias in Linears and LayerNorms, like GPT-2. False: a bit better and faster
 
 class GPT(nn.Module):
 

@@ -8,16 +8,16 @@ from model import GPTConfig, GPT, MoEGPT
 import hydra
 from utils import *
 
-dtype = 'float32' #scatterMoE only has float32 support
-
-# if torch.cuda.is_available():
-#     dtype = 'bfloat16' if torch.cuda.is_bf16_supported() else 'float16'
-# else:
-#     dtype = 'None'
+if torch.cuda.is_available():
+    dtype = 'bfloat16' if torch.cuda.is_bf16_supported() else 'float16'
+else:
+    dtype = 'None'
 # HYDRA_FULL_ERROR=1
 
 @hydra.main(version_base=None,config_path="./configs", config_name="test_config.yaml")
 def main(cfg):
+    ### INITIALIZE ###
+
     set_seed(cfg.seed)  # set random seed
     fp = open_log(cfg) # create log file and initialize wandb
     device = cfg.device # decide whether cpu or gpu
@@ -35,17 +35,16 @@ def main(cfg):
     iter_num = 0
     best_val_loss = 1e9
     
-    ### DATA STUFF HERE
+    ### GET TRAINING AND VALIDATION DATALOADERS ###
+
     data_dir_train = cfg.dataset_path + 'tokens_path_train.npy'
     data_dir_eval = cfg.dataset_path + 'tokens_path_eval.npy'
     # Get the number of unique tokens in the dataset (meta_vocab_size) from the training data file to initialize model
     data = np.load(data_dir_train, allow_pickle=True)
     flattened_data = [token for path in data for token in path]
     meta_vocab_size = len(list(set(flattened_data)))
-        
     #Create dataloaders
     train_dataloader, val_dataloader = get_dataloader_lol(train_data_path=data_dir_train, val_data_path=data_dir_eval, batch_size=cfg.batch_size, num_workers=1)
-
     def pick_dataloader(split):
         dataloader = train_dataloader if split == 'train' else val_dataloader
         return dataloader
@@ -56,14 +55,13 @@ def main(cfg):
     with open(cfg.dataset_path + 'dags.pkl', "rb") as f:
         dag_dict = pickle.load(f)
 
-    # TODO: Test some paths here
-
     # model init
     # add + 1 to meta_vocab_size to account for padding token with TOKENID=0
     model_args = dict(n_layer=cfg.n_layer, n_head=cfg.n_head, n_embd=cfg.n_embd, block_size=cfg.block_size, bias=cfg.bias, vocab_size=meta_vocab_size+1, dropout=cfg.dropout)
                     
     if cfg.init_from == 'scratch':
         print("Initializing a new model from scratch")
+        cfg.vocab_size = meta_vocab_size + 1
         model = MoEGPT(cfg)
     # TODO: Implement checkpointing for MoEGPT, delete GPT stuff
     elif cfg.init_from == 'resume': # resume training from a checkpoint
@@ -163,9 +161,13 @@ def main(cfg):
             losses = estimate_loss()
             print(f"step {iter_num}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
             
+            # Estimate experts' load
+            expert_load = model.transformer.h[0].moe.load.detach().cpu().numpy()
+            print("experts load", expert_load[0])
+            expert_load = expert_load/expert_load.sum()
+            
             if cfg.deploy: # wandb logging
-                # TODO: Understand this part.
-                cfg.vocab_size = meta_vocab_size + 1
+                # Estimate accuracy
                 top_k = cfg.top_k
                 temperature = cfg.temperature
                 max_new_tokens = cfg.block_size
@@ -185,9 +187,6 @@ def main(cfg):
                 edge_accuracies, does_end_at_targets, path_lengths = check_generated_path_accuracy(dag_dict, generated_paths, token_map)
                 edge_accuracies[np.isnan(edge_accuracies)] = 0
 
-                expert_load = model.transformer.h[0].moe.load.detach().cpu().numpy()
-                print("experts load", expert_load[0])
-                expert_load = expert_load/expert_load.sum()
 
                 wandb.log({
                     "iter": iter_num,

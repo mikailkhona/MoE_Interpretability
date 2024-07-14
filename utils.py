@@ -238,11 +238,9 @@ def check_generated_path_accuracy(dag_dict, generated_tokens, token_map):
     path_lengths = np.zeros((num_samples,batch_size))
     for j in range(num_samples):
         for i in range(batch_size):
-            batch_idx = i
-            sample_idx = j
-            tokens = generated_tokens[sample_idx][batch_idx].cpu().numpy()
+            tokens = generated_tokens[j][i].cpu().numpy()
             nodes = [token_map[token.item() - 1] for token in tokens if token.item() != 0]
-            stop_token_indices = np.where(np.array(nodes) == '###')[0]
+            stop_token_indices = np.where(np.array(nodes) == 'path')[0] # first instance of ###
             if stop_token_indices.shape[0] == 0:
                 stop_index = len(nodes)
             else:

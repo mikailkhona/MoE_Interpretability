@@ -1,3 +1,10 @@
+# Generate four files for the graph task dataset:
+# 1. dags.pkl, a dictionary with each separate DAG as a networkx DiGraph object. Each graph's nodes have their own letter,
+#    e.g. the first graph has nodes A1, A2, ..., the second B1, B2, ... and so on.
+# 2. token_maps.npz, with the token map (idx -> token/node name) and the reverse token map (token->idx)
+# 3. tokens_path_train.npy, a list of all the selected training paths
+# 4. tokens_path_eval.npy, a list of all the selected evaluation paths
+
 from string import ascii_uppercase
 import numpy as np
 import networkx as nx
