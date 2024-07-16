@@ -114,7 +114,7 @@ def generate_graph_data(num_graphs=1, num_nodes=100, p=0.9, path_length_threshol
         path_dict = {}
         for node_pair, paths in path_dict_no_prompt.items():
             for path in paths:
-                path_w_tokens = ['target', path[-1]] + path[:] + ['path', '###']
+                path_w_tokens = ['target', path[-1]] + path[:] + ['###']
                 path_dict.setdefault(node_pair, []).append(path_w_tokens)
             path_dict[node_pair].sort(key=len)
 

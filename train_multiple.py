@@ -2,6 +2,7 @@ import os
 import pickle
 from contextlib import nullcontext
 import numpy as np
+import pandas as pd
 import torch
 import wandb
 from model import GPTConfig, GPT, MoEGPT
@@ -25,6 +26,7 @@ def main(cfg):
     tokens_per_iter = int(cfg.gradient_accumulation_steps * cfg.batch_size * cfg.block_size)
     print(f"tokens per iteration will be: {tokens_per_iter:,}")
     os.makedirs(cfg.out_dir, exist_ok=True)
+    os.makedirs(os.path.join(cfg.out_dir, 'checkpoints'), exist_ok=True)
 
     torch.backends.cuda.matmul.allow_tf32 = True # allow tf32 on matmul
     torch.backends.cudnn.allow_tf32 = True # allow tf32 on cudnn
@@ -36,7 +38,7 @@ def main(cfg):
     iter_num = 0
     best_val_loss = 1e9
     
-    ### GET TRAINING AND VALIDATION DATALOADERS ###
+    ### LOAD TRAINING AND EVAL DATA ###
 
     data_dir_train = cfg.dataset_path + 'tokens_path_train.npy'
     data_dir_eval = cfg.dataset_path + 'tokens_path_eval.npy'
@@ -56,10 +58,11 @@ def main(cfg):
     with open(cfg.dataset_path + 'dags.pkl', "rb") as f:
         dag_dict = pickle.load(f)
 
-    # model init
+    ### INITIALIZE MODEL ###
+                    
     # add + 1 to meta_vocab_size to account for padding token with TOKENID=0
     model_args = dict(n_layer=cfg.n_layer, n_head=cfg.n_head, n_embd=cfg.n_embd, block_size=cfg.block_size, bias=cfg.bias, vocab_size=meta_vocab_size+1, dropout=cfg.dropout)
-                    
+    
     if cfg.init_from == 'scratch':
         print("Initializing a new model from scratch")
         cfg.vocab_size = meta_vocab_size + 1
@@ -93,7 +96,9 @@ def main(cfg):
         model.crop_block_size(cfg.block_size)
         model_args['block_size'] = cfg.block_size
     model.to(device)
-    
+
+    ### OPTIMIZATION STUFF###
+
     # initialize a GradScaler. If enabled=False scaler is a no-op
     # Mixed precision training: look at gradients convert 32 bits to 16 bits
     scaler = torch.cuda.amp.GradScaler(enabled=(dtype == 'float16'))
@@ -108,19 +113,23 @@ def main(cfg):
         unoptimized_model = model
         model = torch.compile(model)
 
+    ### TRAINING ###
     @torch.no_grad()
-    def estimate_loss():        
+    def eval_model():        
         '''
-        Return a dictionary containing train loss and val loss
+        Return a dict containing train loss and val loss, and another dict containing 
+        the expert load, both for each graph and the total.
         '''
-        out = {}
+        losses = {}
+        loads = {graph_idx: np.zeros(cfg.num_experts) for graph_idx in range(cfg.num_graphs)}
+        loads['total'] = np.zeros(cfg.num_experts)
         model.eval()
         for split in ['train', 'val']:
-            losses = torch.zeros(cfg.eval_iters)
+            raw_losses = torch.zeros(cfg.eval_iters)
             dataloader = iter(pick_dataloader(split))
             for k in range(cfg.eval_iters):
                 try:
-                    X, Y = next(dataloader)
+                    X, Y = next(dataloader) # X and Y are (batch_size x path_tokens)
                 except StopIteration:
                     dataloader = iter(pick_dataloader('train'))
                     X, Y = next(dataloader)
@@ -132,25 +141,34 @@ def main(cfg):
                     X, Y = X.to(device), Y.to(device)
                 with ctx:
                     logits, loss = model(X, Y)
-
-                losses[k] = loss.item()
-            out[split] = losses.mean()
+                    expert_activations = model.transformer.h[0].moe.expert_activations.detach().cpu().numpy() # (batch, sequence, k)
+                    for path in range(X.shape[0]):
+                        graph_idx = which_graph(X[path, 1], token_map) # check which graph this batch is using
+                        loads[graph_idx] = expert_activations[path]
+                        loads['total'] += expert_activations[path]
+                raw_losses[k] = loss.item()
+            losses[split] = raw_losses.mean()
+            loads = {id: loads[id]/loads[id].sum() for id in loads} # normalize
         model.train()
-        return out
+        return losses, loads
 
     # Training loop starts
     dataloader = iter(pick_dataloader('train'))
     X, Y = next(dataloader)
     X, Y = X.to(device), Y.to(device)
 
-    local_iter_num = 0
     raw_model = model
-    running_mfu = -1.0
 
     print('Train loop started')
     
-    # expert_activations = {graph_idx: np.zeros(cfg.num_experts) for graph_idx in range(num_graphs)}
-    
+    # Create expert load log, both wandb (total load only) and locally (pd.DataFrame for each graph and total).
+    if cfg.deploy:
+        wandb_expert_load = wandb.Table(columns=[f"exp{_}" for _ in range(cfg.num_experts)])
+    expert_load = {graph_idx: pd.DataFrame(columns=[f"exp{_}" for _ in range(cfg.num_experts)]) for graph_idx in range(cfg.num_graphs)}
+    expert_load['total'] = pd.DataFrame(columns=[f"exp{_}" for _ in range(cfg.num_experts)])
+    for df in expert_load.values():
+        df.index.name = 'iter'
+
     while True:
         # determine and set the learning rate for this iteration
         lr = get_cosine_warmp_lr(iter_num, cfg.learning_rate, cfg.warmup_iters, cfg.lr_decay_iters, cfg.min_lr) if cfg.decay_lr else cfg.learning_rate
@@ -159,16 +177,16 @@ def main(cfg):
 
         # evaluate the loss on train/val sets and write checkpoints
         if iter_num % cfg.eval_interval == 0:
-            losses = estimate_loss()
+            losses, loads = eval_model()
             print(f"step {iter_num}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
             
-            # Estimate experts' load
-            expert_load = model.transformer.h[0].moe.load.detach().cpu().numpy()
-            print("experts load", expert_load[0])
-            expert_load = expert_load/expert_load.sum()
-            
+            # Log expert load
+            print(f"experts load %: {[round(100*load) for load in loads['total']]}")
+            for key in expert_load:
+                expert_load[key].loc[iter_num] = loads[key]
+
             if cfg.deploy: # wandb logging
-                # Estimate accuracy
+                wandb_expert_load.add_data(*loads['total'])
                 top_k = cfg.top_k
                 temperature = cfg.temperature
                 max_new_tokens = cfg.block_size
@@ -188,7 +206,6 @@ def main(cfg):
                 edge_accuracies, does_end_at_targets, path_lengths = check_generated_path_accuracy(dag_dict, generated_paths, token_map)
                 edge_accuracies[np.isnan(edge_accuracies)] = 0
 
-
                 wandb.log({
                     "iter": iter_num,
                     "train/loss": losses['train'],
@@ -197,15 +214,8 @@ def main(cfg):
                     "edge_accuracies": np.mean(edge_accuracies),
                     "does_end_at_target": np.mean(does_end_at_targets),
                     "path_lengths": np.mean(path_lengths),
-                    "expert_load": dict(zip(range(cfg.num_experts), expert_load))
+                    "expert_load": wandb_expert_load
                 })
-
-                # Log the expert activations for each graph to wandb
-                # for graph_idx in range(num_graphs):
-                #     wandb.log({f"expert_activations/graph_{graph_idx}": expert_activations[graph_idx]}, step=iter_num)
-
-                # Reset the expert activations for the next interval
-                # expert_activations = {graph_idx: np.zeros(cfg.num_experts) for graph_idx in range(num_graphs)}
 
             # evaluate and checkpoint model
             if losses['val'] < best_val_loss or cfg.always_save_checkpoint:
@@ -232,16 +242,6 @@ def main(cfg):
             with ctx:
                 logits, loss = model(X, Y)
                 loss = loss / cfg.gradient_accumulation_steps
-
-            # Get the graph indices from the current batch
-            # graph_indices = X[:, 1, 0].cpu().numpy()  # Assuming the second token in each sequence represents the graph index
-
-            # Extract the expert activations from the model -- expert_act to implement
-            # expert_acts = model.transformer.h[0].moe.expert_act.detach().cpu().numpy()
-
-            # Update the expert activations for each graph
-            # for graph_idx, expert_act in zip(graph_indices, expert_acts):
-            #     expert_activations[graph_idx] += expert_act
 
             # immediately async prefetch next batch while model is doing the forward pass on the GPU
             try:
@@ -275,10 +275,12 @@ def main(cfg):
             lossf = loss.item() * cfg.gradient_accumulation_steps
 
         iter_num += 1
-        local_iter_num += 1
 
         if iter_num > cfg.max_iters: # termination conditions
             break
+    
+    with open(os.path.join(cfg.out_dir, 'expert_load.pkl'), 'wb') as out_file:
+        pickle.dump(expert_load, out_file)
 
     cleanup(cfg, fp)
 

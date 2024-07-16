@@ -145,8 +145,9 @@ class scatterMoE(nn.Module):
         routing_weights, selected_experts = torch.topk(routing_weights, self.k, dim=-1)
         routing_weights /= routing_weights.sum(dim=-1, keepdim=True)
         
-        # count the times each expert is selected.
-        self.load = F.one_hot(selected_experts, num_classes=self.num_experts).sum(dim=0)
+        # For logging expert load later, count along activations along sequence and k
+        expert_activations = torch.nn.functional.one_hot(selected_experts.view(batch_size, sequence_length, self.k)).sum(2).sum(1)
+        self.expert_activations = expert_activations
 
         # we cast back to the input dtype
         routing_weights = routing_weights.to(hidden_states.dtype)

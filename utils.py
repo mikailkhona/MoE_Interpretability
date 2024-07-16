@@ -10,7 +10,7 @@ import sys
 
 from omegaconf import OmegaConf
 
-## INIT STUFF
+## Init stuff
 
 def set_seed(seed=0):
     """
@@ -79,7 +79,7 @@ class dotdict(dict):
     __setattr__ = dict.__setitem__
     __delattr__ = dict.__delitem__
 
-# Dataloader stuff
+## Dataloader stuff
 
 def generate_batches_lol(batch_size, file_path):
     '''
@@ -140,7 +140,6 @@ class SequenceDataset(Dataset):
             return x,y
         else:
             return torch.tensor(x, dtype=torch.int64), torch.tensor(y, dtype=torch.int64)
-
 
 def get_dataloader(train_data_path, val_data_path, block_size, batch_size, shuffle=True, num_workers=4, add_one_token=True):
     '''
@@ -205,7 +204,12 @@ def get_dataloader_lol(train_data_path, val_data_path, batch_size, shuffle=True,
 
     return train_dataloader, val_dataloader
 
-# Measuring accuracy.
+# Accuracy/eval stuff
+def which_graph(token, token_map):
+    """
+    Given a token in the path, e.g. X[0,1], which graph does it belong to? This is indicated by the first letter of the node, e.g. 2 for node B20.
+    """
+    return ascii_uppercase.index(token_map[token.item() - 1][0])
 
 def check_edge_accuracy(dag_dict, nodes, start_index, stop_index):
     """
@@ -239,7 +243,7 @@ def check_generated_path_accuracy(dag_dict, generated_tokens, token_map):
         for i in range(batch_size):
             tokens = generated_tokens[j][i].cpu().numpy()
             nodes = [token_map[token.item() - 1] for token in tokens if token.item() != 0]
-            stop_token_indices = np.where(np.array(nodes) == 'path')[0] # first instance of 'path' EOS token
+            stop_token_indices = np.where(np.array(nodes) == '###')[0] # first instance of '###' EOS token
             if stop_token_indices.shape[0] == 0:
                 stop_index = len(nodes)
             else:

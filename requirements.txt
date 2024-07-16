@@ -1,6 +1,7 @@
 graphviz
 networkx 
 numpy
+pandas
 scipy
 pandas
 hydra-core
