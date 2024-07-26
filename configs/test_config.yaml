@@ -3,21 +3,21 @@
 deploy: True
 # Collect experiments together. Name of log file will be wandb run id
 tag: scratch
-seed: 0
+seed: 99
 # default config values designed to train a gpt2 (124M) on OpenWebText
 # I/O
 out_dir : 'output'
 eval_interval : 100
 log_interval : 100
 save_ckpt_interval : 100
-eval_iters : 200
+eval_iters : 150
 eval_only : False # if True, script exits right after the first eval
-always_save_checkpoint : True # if True, always save a checkpoint after each eval
+always_save_checkpoint : False # if True, always save a checkpoint after each eval
 init_from : 'scratch' # 'scratch' or 'resume' or 'gpt2*'
 # wandb logging
 # wandb_log = False # disabled by default
 wandb_project : 'MoE'
-wandb_run_name : 'test' 
+wandb_run_name : 'test_expert_accuracy' 
 # data
 dataset_path : 'data/'
 gradient_accumulation_steps : 1 #40 # used to simulate larger batch sizes
@@ -28,7 +28,7 @@ vocab_size: 102
 n_layer : 1
 n_head : 1
 n_embd : 64
-num_experts: 8
+num_experts: 3
 num_graphs: 3
 expert_k: 1
 noisy_gating: true
@@ -53,9 +53,9 @@ backend : 'nccl' # 'nccl', 'gloo', etc.
 # system
 device : 'cuda' # examples: 'cpu', 'cuda', 'cuda:0', 'cuda:1' etc., or try 'mps' on macbooks
 compile : False # use PyTorch 2.0 to compile the model to be faster
-top_k : 10
+logit_top_k : 10 # this top_k is only used for selecting which logits to generate, unrelated to MoE.
 temperature : 1 
-num_samples_generated_for_accuracy : 1
+num_samples : 1 # Number of samples generated for accuracy per batch
 
 # Nested configs. Disable hydra logging
 defaults:

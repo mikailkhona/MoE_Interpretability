@@ -44,6 +44,8 @@ def main(cfg):
     data_dir_eval = cfg.dataset_path + 'tokens_path_eval.npy'
     # Get the number of unique tokens in the dataset (meta_vocab_size) from the training data file to initialize model
     data = np.load(data_dir_train, allow_pickle=True)
+    data_eval = np.load(data_dir_eval, allow_pickle=True)
+    print(f'Loaded {len(data)} training paths and {len(data_eval)} validation paths')
     flattened_data = [token for path in data for token in path]
     meta_vocab_size = len(list(set(flattened_data)))
     #Create dataloaders
@@ -117,13 +119,18 @@ def main(cfg):
     @torch.no_grad()
     def eval_model():        
         '''
-        Return a dict containing train loss and val loss, and another dict containing 
-        the expert load, both for each graph and the total.
+        Returns a list containing:
+         1. Dict containing train loss and val loss 
+         2. Dict containing the expert loads, both for each graph and total.
+         3. List with total edge accuracies, does_end_at_target and path_lengths, using all experts.
+         4. Dict with edge accuracies, does_end_at_target and path_lengths for each expert.
         '''
         losses = {}
         loads = {graph_idx: np.zeros(cfg.num_experts) for graph_idx in range(cfg.num_graphs)}
         loads['total'] = np.zeros(cfg.num_experts)
+        expert_accuracies = {} # index 0 is for using all experts/through all graphs.
         model.eval()
+        # Losses
         for split in ['train', 'val']:
             raw_losses = torch.zeros(cfg.eval_iters)
             dataloader = iter(pick_dataloader(split))
@@ -131,6 +138,7 @@ def main(cfg):
                 try:
                     X, Y = next(dataloader) # X and Y are (batch_size x path_tokens)
                 except StopIteration:
+                    print('Not enough data in validation, using train data instead')
                     dataloader = iter(pick_dataloader('train'))
                     X, Y = next(dataloader)
 
@@ -141,6 +149,7 @@ def main(cfg):
                     X, Y = X.to(device), Y.to(device)
                 with ctx:
                     logits, loss = model(X, Y)
+                    # Expert activations
                     expert_activations = model.transformer.h[0].moe.expert_activations.detach().cpu().numpy() # (batch, sequence, k)
                     for path in range(X.shape[0]):
                         graph_idx = which_graph(X[path, 1], token_map) # check which graph this batch is using
@@ -149,8 +158,23 @@ def main(cfg):
                 raw_losses[k] = loss.item()
             losses[split] = raw_losses.mean()
             loads = {id: loads[id]/loads[id].sum() for id in loads} # normalize
-        model.train()
-        return losses, loads
+            # Accuracies
+            dataloader = iter(val_dataloader)
+            generated_paths = []
+            generated_paths_expert = {expert: [] for expert in range(cfg.num_experts)}
+            with ctx:
+                for k in range(cfg.num_samples):
+                    x, _ = next(dataloader)
+                    # Generate a list of lists of sequences
+                    # Each sublist of size batch_size x block_size + 3 ('target', target_node, start_node)
+                    generated_paths.append(model.generate(x[:, :3].to(device), cfg.block_size, temperature=cfg.temperature, top_k=cfg.logit_top_k))
+                    for exp in range(cfg.num_experts): # Routing every token to one expert at a time
+                        generated_paths_expert[exp].append(model.generate(x[:, :3].to(device), cfg.block_size, temperature=cfg.temperature, top_k=cfg.logit_top_k, only_expert=exp))  
+            total_accuracies = check_generated_path_accuracy(dag_dict, generated_paths, token_map)
+            for exp in range(cfg.num_experts):
+                expert_accuracies[exp] = check_generated_path_accuracy(dag_dict, generated_paths_expert[exp], token_map)
+            model.train()
+        return losses, loads, total_accuracies, expert_accuracies
 
     # Training loop starts
     dataloader = iter(pick_dataloader('train'))
@@ -162,8 +186,6 @@ def main(cfg):
     print('Train loop started')
     
     # Create expert load log, both wandb (total load only) and locally (pd.DataFrame for each graph and total).
-    if cfg.deploy:
-        wandb_expert_load = wandb.Table(columns=[f"exp{_}" for _ in range(cfg.num_experts)])
     expert_load = {graph_idx: pd.DataFrame(columns=[f"exp{_}" for _ in range(cfg.num_experts)]) for graph_idx in range(cfg.num_graphs)}
     expert_load['total'] = pd.DataFrame(columns=[f"exp{_}" for _ in range(cfg.num_experts)])
     for df in expert_load.values():
@@ -177,7 +199,7 @@ def main(cfg):
 
         # evaluate the loss on train/val sets and write checkpoints
         if iter_num % cfg.eval_interval == 0:
-            losses, loads = eval_model()
+            losses, loads, total_accuracies, expert_accuracies = eval_model()
             print(f"step {iter_num}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
             
             # Log expert load
@@ -185,42 +207,21 @@ def main(cfg):
             for key in expert_load:
                 expert_load[key].loc[iter_num] = loads[key]
 
-            if cfg.deploy: # wandb logging
-                wandb_expert_load.add_data(*loads['total'])
-                top_k = cfg.top_k
-                temperature = cfg.temperature
-                max_new_tokens = cfg.block_size
-                num_samples = cfg.num_samples_generated_for_accuracy
-                dataloader = iter(val_dataloader)
-                n = 3
-                generated_paths = []
-                model.eval()
-                with torch.no_grad():
-                    with ctx:
-                        for k in range(num_samples):
-                            x, _ = next(dataloader)
-                            # Generate a list of lists of sequences
-                            # Each sublist of size batch_size x max_new_tokens + n
-                            generated_paths.append(model.generate(x[0:, 0:n].to(device), max_new_tokens, temperature=temperature, top_k=top_k))
-                model.train()
-                edge_accuracies, does_end_at_targets, path_lengths = check_generated_path_accuracy(dag_dict, generated_paths, token_map)
-                edge_accuracies[np.isnan(edge_accuracies)] = 0
+            print(f'edge accuracy: {round(100*total_accuracies[0])}%, does end at target: {round(100*total_accuracies[1])}%')
 
+            if cfg.deploy: # wandb logging
                 wandb.log({
                     "iter": iter_num,
                     "train/loss": losses['train'],
                     "val/loss": losses['val'],
-                    "lr": lr,
-                    "edge_accuracies": np.mean(edge_accuracies),
-                    "does_end_at_target": np.mean(does_end_at_targets),
-                    "path_lengths": np.mean(path_lengths),
-                    "expert_load": wandb_expert_load
+                    "lr": lr
                 })
-
+                wandb.log(dict(zip(["edge_accuracies",  "does_end_at_target", "path_lengths", "expert_load"], total_accuracies)))
+                for exp in range(cfg.num_experts):
+                    wandb.log(dict(zip([f"expert_{exp}/edge_accuracies",  f"expert_{exp}/does_end_at_target", f"expert_{exp}/path_lengths"], expert_accuracies[exp])))
             # evaluate and checkpoint model
             if losses['val'] < best_val_loss or cfg.always_save_checkpoint:
                 best_val_loss = losses['val']
-                
                 if iter_num > 0 and iter_num % cfg.save_ckpt_interval == 0:
                     checkpoint = {
                         'model': raw_model.state_dict(),
@@ -231,7 +232,7 @@ def main(cfg):
                         'config': cfg,
                     }
                     print(f"saving checkpoint to {cfg.out_dir}")
-                    torch.save(checkpoint, os.path.join(cfg.out_dir, 'ckpt' + str(iter_num) + '.pt'))
+                    torch.save(checkpoint, os.path.join(cfg.out_dir, 'checkpoints', 'ckpt' + str(iter_num) + '.pt'))
 
         if iter_num == 0 and cfg.eval_only:
             break
@@ -279,7 +280,7 @@ def main(cfg):
         if iter_num > cfg.max_iters: # termination conditions
             break
     
-    with open(os.path.join(cfg.out_dir, 'expert_load.pkl'), 'wb') as out_file:
+    with open(os.path.join(cfg.out_dir, f'{wandb.run.id}_expert_loads.pkl'), 'wb') as out_file:
         pickle.dump(expert_load, out_file)
 
     cleanup(cfg, fp)

@@ -33,7 +33,7 @@ def open_log(cfg):
         # Initialize wandb
         print('Initializing wandb project')
         wandb.init(project=cfg.wandb_project)
-        wandb.run.name = wandb.run.id
+        # wandb.run.name = wandb.run.id
         wandb.run.save()
         wandb.config.update(OmegaConf.to_container(cfg))
         # Open log file
@@ -224,7 +224,7 @@ def check_edge_accuracy(dag_dict, nodes, start_index, stop_index):
     """
     edge_bools = []
     edge_list = []
-    graph_idx = ascii_uppercase.index(nodes[2][0]) # graph idx is indicated by the node letter: 1 for A, 2 for B, etc.
+    graph_idx = ascii_uppercase.index(nodes[2][0]) # graph idx is indicated by the node letter: 0 for A, 1 for B, etc.
     for i in range(start_index, stop_index-1):
         edge_bools.append(dag_dict[graph_idx].has_edge(nodes[i], nodes[i + 1]))
         edge_list.append((nodes[i], nodes[i + 1]))
@@ -236,7 +236,7 @@ def check_generated_path_accuracy(dag_dict, generated_tokens, token_map):
     num_samples = len(generated_tokens)
     batch_size = len(generated_tokens[0])
 
-    accuracies = np.zeros((num_samples,batch_size))
+    edge_accuracies = np.zeros((num_samples,batch_size))
     does_end_at_targets = np.zeros((num_samples,batch_size))
     path_lengths = np.zeros((num_samples,batch_size))
     for j in range(num_samples):
@@ -249,15 +249,15 @@ def check_generated_path_accuracy(dag_dict, generated_tokens, token_map):
             else:
                 stop_index = stop_token_indices[0]
             edge_bools, edge_list, does_end_at_target = check_edge_accuracy(dag_dict, nodes, start_index=2, stop_index=stop_index)
-            accuracies[j,i] = np.mean(edge_bools)
+            edge_accuracies[j,i] = np.mean(edge_bools)
             does_end_at_targets[j,i] = does_end_at_target
             path_lengths[j,i] = len(edge_list)
-
-    return accuracies, does_end_at_targets, path_lengths
+    edge_accuracies[np.isnan(edge_accuracies)] = 0 # when the path is malformed and has no actual edges, or no EOS token
+    return np.mean(edge_accuracies), np.mean(does_end_at_targets), np.mean(path_lengths)
 
 def make_prompt(source, target, token_idx_map):
-  source_token = token_idx_map[source]
-  target_token = token_idx_map[target]
-  start_token = token_idx_map['target']
-  prompt = torch.from_numpy(np.array([start_token + 1, target_token+1, source_token+1]))
-  return prompt
+    source_token = token_idx_map[source]
+    target_token = token_idx_map[target]
+    start_token = token_idx_map['target']
+    prompt = torch.from_numpy(np.array([start_token + 1, target_token+1, source_token+1]))
+    return prompt

@@ -134,21 +134,26 @@ class scatterMoE(nn.Module):
             activation= nn.GELU()
         )
 
-    def forward(self, hidden_states: torch.Tensor):
+    def forward(self, hidden_states: torch.Tensor, only_expert=None):
         batch_size, sequence_length, n_embd = hidden_states.shape
         hidden_states = hidden_states.view(-1, n_embd)
-        # router_logits: (batch * sequence_length, n_experts)
-        router_logits = self.gate(hidden_states)
-
-        routing_weights = F.softmax(router_logits, dim=1, dtype=torch.float32)
-        # both routing_weights, selected_experts: (batch * sequence_length, k)
-        routing_weights, selected_experts = torch.topk(routing_weights, self.k, dim=-1)
-        routing_weights /= routing_weights.sum(dim=-1, keepdim=True)
         
-        # For logging expert load later, count along activations along sequence and k
-        expert_activations = torch.nn.functional.one_hot(selected_experts.view(batch_size, sequence_length, self.k)).sum(2).sum(1)
-        self.expert_activations = expert_activations
-
+        if not only_expert:
+            # router_logits: (batch * sequence_length, n_experts)
+            router_logits = self.gate(hidden_states)
+            routing_weights = F.softmax(router_logits, dim=1, dtype=torch.float32)
+            # both routing_weights, selected_experts: (batch * sequence_length, k)
+            routing_weights, selected_experts = torch.topk(routing_weights, self.k, dim=-1)
+            routing_weights /= routing_weights.sum(dim=-1, keepdim=True)
+            # For logging expert load later, count along activations along sequence and k
+            expert_activations = torch.nn.functional.one_hot(selected_experts.view(batch_size, sequence_length, self.k)).sum(2).sum(1)
+            self.expert_activations = expert_activations
+        else:
+            # Assigning all tokens to the selected expert. A little inneficient, maybe improve if it's slow.
+            router_logits = None
+            routing_weights = (1/self.k)*torch.ones(batch_size*sequence_length, self.k, device='cuda')
+            selected_experts = only_expert*torch.ones(batch_size*sequence_length, self.k, dtype=torch.int8, device='cuda')
+    
         # we cast back to the input dtype
         routing_weights = routing_weights.to(hidden_states.dtype)
         final_hidden_states = self.moe_mlp(hidden_states, routing_weights, selected_experts)
@@ -159,20 +164,19 @@ class MoEBlock(nn.Module):
     '''
     One self-attention block using MoE instead off fully connected MLP
     '''
-    
     def __init__(self, config):
         super().__init__()
         self.ln_1 = LayerNorm(config.n_embd, bias=config.bias)
         self.attn = CausalSelfAttention(config)
         self.ln_2 = LayerNorm(config.n_embd, bias=config.bias)
         self.moe = scatterMoE(config) 
-    def forward(self, x):
+    def forward(self, x, only_expert=None):
         '''
         Add to residual stream after self-attention and MLP.
         '''
 
         x = x + self.attn(self.ln_1(x))
-        moe_output, router_logits = self.moe(self.ln_2(x))
+        moe_output, router_logits = self.moe(self.ln_2(x), only_expert=only_expert)
         x = x + moe_output
         return x, router_logits
 
@@ -275,18 +279,10 @@ class MoEGPT(nn.Module):
         elif isinstance(module, nn.Embedding):
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
-    def forward(self, idx, targets=None):
+    def forward(self, idx, targets=None, only_expert=None):
         device = idx.device
         b, t = idx.size()
         assert t <= self.config.block_size, f"Cannot forward sequence of length {t}, block size is only {self.config.block_size}"
-        # Pad idx with empty tokens (Represented by TOKENID = 0) if its length is shorter than block_size
-        # if t < self.config.block_size:
-        #     padding_length = self.config.block_size - t
-        #     padding_tokens = torch.zeros((b, padding_length), dtype=torch.long, device=device)
-        #     idx = torch.cat((idx, padding_tokens), dim=1)
-        #     t = self.config.block_size # Update t to the new length after paddingh
-        #     if targets is not None:
-        #         targets = torch.cat((targets, padding_tokens), dim=1)
 
         pos = torch.arange(0, t, dtype=torch.long, device=device) # shape (t)
 
@@ -295,7 +291,7 @@ class MoEGPT(nn.Module):
         pos_emb = self.transformer.wpe(pos) # position embeddings of shape (t, n_embd)
         x = self.transformer.drop(tok_emb + pos_emb)
         for moe_block in self.transformer.h:
-            x, router_logits = moe_block(x)
+            x, router_logits = moe_block(x, only_expert=only_expert)
         x = self.transformer.ln_f(x)
 
         if targets is not None:
@@ -390,17 +386,18 @@ class MoEGPT(nn.Module):
         return mfu
 
     @torch.no_grad()
-    def generate(self, idx, max_new_tokens, temperature=1.0, top_k=None):
+    def generate(self, idx, max_new_tokens, temperature=1.0, top_k=None, only_expert=None):
         """
         Take a conditioning sequence of indices idx (LongTensor of shape (b,t)) and complete
         the sequence max_new_tokens times, feeding the predictions back into the model each time.
+        If only_expert is provided, route all tokens to that expert, essentially turning MoE into the usual MLP.
         Most likely you'll want to make sure to be in model.eval() mode of operation for this.
         """
         for _ in range(max_new_tokens):
             # if the sequence context is growing too long we must crop it at block_size
             idx_cond = idx if idx.size(1) <= self.config.block_size else idx[:, -self.config.block_size:]
             # forward the model to get the logits for the index in the sequence
-            logits, _ = self(idx_cond)
+            logits, _ = self(idx_cond, only_expert=only_expert)
             # pluck the logits at the final step and scale by desired temperature
             logits = logits[:, -1, :] / temperature
             # optionally crop the logits to only the top k options
@@ -534,15 +531,7 @@ class GPT(nn.Module):
         device = idx.device
         b, t = idx.size()
         assert t <= self.config.block_size, f"Cannot forward sequence of length {t}, block size is only {self.config.block_size}"
-        # Pad idx with empty tokens (Represented by TOKENID = 0) if its length is shorter than block_size
-        # if t < self.config.block_size:
-        #     padding_length = self.config.block_size - t
-        #     padding_tokens = torch.zeros((b, padding_length), dtype=torch.long, device=device)
-        #     idx = torch.cat((idx, padding_tokens), dim=1)
-        #     t = self.config.block_size # Update t to the new length after paddingh
-        #     if targets is not None:
-        #         targets = torch.cat((targets, padding_tokens), dim=1)
-
+        
         pos = torch.arange(0, t, dtype=torch.long, device=device) # shape (t)
 
         # forward the GPT model itself
