@@ -56,14 +56,12 @@ def main(cfg):
         dataloader = train_dataloader if split == 'train' else val_dataloader
         return dataloader
 
-    # Load multi_ngram model and token_map to check accuracy:
+    # Load ngram model and token_map to check accuracy:
     token_map = np.load(cfg.dataset_path + 'token_map.npz')
-    with open(cfg.dataset_path + 'multi_ngram.pkl', "rb") as f:
-        multi_ngram = pickle.load(f)
+    with open(cfg.dataset_path + 'ngram.pkl', "rb") as f:
+        ngram = pickle.load(f)
 
-    vocab = multi_ngram.vocab
-    context_size = multi_ngram.k
-    ngrams = multi_ngram.ngrams
+    vocab = ngram.vocab
 
     ### INITIALIZE MODEL ###
     
@@ -96,7 +94,7 @@ def main(cfg):
         Returns a list containing:
          1. Dict containing train loss and val loss 
          2. List with total expert loads.
-         3. Dict with KL divergence of prob. distribution of the model from the correct one for each n-gram, and for the total multi n-gram.
+         3. Dict with KL divergence of prob. distribution of the model from the correct one for the n-gram and its marginal smaller n-grams.
         '''
         mean_losses = {}
         loads = np.zeros(cfg.num_experts)
@@ -129,9 +127,9 @@ def main(cfg):
                             model_log_probs = torch.nn.functional.log_softmax(logits[batch], dim=-1).cpu()
                             seq = X[batch].cpu()
                             for i in range(len(seq)):
-                                context = seq[max(0, i-context_size):i].tolist() # context_size size sequence prior to token i
+                                context = seq[max(0, i-ngram.n):i].tolist() # len <= n sequence prior to token i
                                 context_str = [vocab[token-1] for token in context if token != 0] # convert to string
-                                prob_dist = multi_ngram.prob_dist(context_str)
+                                prob_dist = ngram.prob_dist(context_str)
                                 # true_probs[0] is zero because the padding token is not in the vocab
                                 true_probs = torch.zeros(cfg.vocab_size)
                                 true_probs[1:] = torch.tensor([prob_dist[token] for token in vocab])
