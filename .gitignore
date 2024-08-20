@@ -160,5 +160,5 @@ cython_debug/
 #.idea/
 
 wandb/
-out_single_graph_p_925/
 *.pt
+data/

@@ -153,7 +153,7 @@ def main(cfg):
                     expert_activations = model.transformer.h[0].moe.expert_activations.detach().cpu().numpy() # (batch, sequence, k)
                     for path in range(X.shape[0]):
                         graph_idx = which_graph(X[path, 1], token_map) # check which graph this batch is using
-                        loads[graph_idx] = expert_activations[path]
+                        loads[graph_idx] += expert_activations[path]
                         loads['total'] += expert_activations[path]
                 raw_losses[k] = loss.item()
             losses[split] = raw_losses.mean()
@@ -183,7 +183,7 @@ def main(cfg):
 
     raw_model = model
 
-    print('Train loop started')
+    # print('Train loop started')
     
     # Create expert load log, both wandb (total load only) and locally (pd.DataFrame for each graph and total).
     expert_load = {graph_idx: pd.DataFrame(columns=[f"exp{_}" for _ in range(cfg.num_experts)]) for graph_idx in range(cfg.num_graphs)}
@@ -199,6 +199,7 @@ def main(cfg):
 
         # evaluate the loss on train/val sets and write checkpoints
         if iter_num % cfg.eval_interval == 0:
+            # print('evaluating model')
             losses, loads, total_accuracies, expert_accuracies = eval_model()
             print(f"step {iter_num}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
             
@@ -244,6 +245,7 @@ def main(cfg):
                 logits, loss = model(X, Y)
                 loss = loss / cfg.gradient_accumulation_steps
 
+            # print('load new data')
             # immediately async prefetch next batch while model is doing the forward pass on the GPU
             try:
                 X, Y = next(dataloader)
@@ -257,6 +259,7 @@ def main(cfg):
             else:
                 X, Y = X.to(device), Y.to(device)
                 
+            # print('doing backprop')
             # backward pass, with gradient scaling if training in fp16
             scaler.scale(loss).backward()
 

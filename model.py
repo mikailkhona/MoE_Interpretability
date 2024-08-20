@@ -175,7 +175,9 @@ class MoEBlock(nn.Module):
         Add to residual stream after self-attention and MLP.
         '''
 
+        # print('begin attention')
         x = x + self.attn(self.ln_1(x))
+        # print('begin MoE')
         moe_output, router_logits = self.moe(self.ln_2(x), only_expert=only_expert)
         x = x + moe_output
         return x, router_logits
@@ -412,6 +414,23 @@ class MoEGPT(nn.Module):
             idx = torch.cat((idx, idx_next), dim=1)
 
         return idx
+
+    @torch.no_grad()
+    def get_kl_div(self, idx, max_new_tokens):
+        """
+        Generate tokens and calculate the KL divergence between the distribution of the generated tokens
+        """
+        for _ in range(max_new_tokens):
+            # if the sequence context is growing too long we must crop it at block_size
+            idx_cond = idx if idx.size(1) <= self.config.block_size else idx[:, -self.config.block_size:]
+            # forward the model to get the logits for the index in the sequence
+            logits, _ = self(idx_cond)
+            # pluck the logits at the final step and scale by desired temperature
+            logits = logits[:, -1, :]
+            # apply softmax to convert logits to (normalized) probabilities
+            probs = F.softmax(logits, dim=-1)
+
+        return probs
 
 # This stuff below is unrelated to MoEs
 

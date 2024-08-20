@@ -33,7 +33,7 @@ def open_log(cfg):
         # Initialize wandb
         print('Initializing wandb project')
         wandb.init(project=cfg.wandb_project)
-        # wandb.run.name = wandb.run.id
+        wandb.run.name = wandb.run.id
         wandb.run.save()
         wandb.config.update(OmegaConf.to_container(cfg))
         # Open log file

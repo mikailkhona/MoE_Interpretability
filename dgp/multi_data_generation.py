@@ -120,7 +120,7 @@ def generate_graph_data(num_graphs=1, num_nodes=100, p=0.9, path_length_threshol
 
         node_pairs_exceeding_threshold = [pair for pair, paths in path_dict.items() if any(len(path) > path_length_threshold for path in paths)]
 
-        num_paths = int(frac * len(node_pairs_exceeding_threshold))
+        num_paths = int((1-frac) * len(node_pairs_exceeding_threshold))
         chosen_node_pairs = random.sample(node_pairs_exceeding_threshold, num_paths)
         held_out_node_pairs = [t for t in node_pairs_exceeding_threshold if t not in chosen_node_pairs]
 
@@ -169,8 +169,8 @@ def generate_graph_data(num_graphs=1, num_nodes=100, p=0.9, path_length_threshol
 
 if __name__ == '__main__':
     num_graphs = 3
-    num_nodes = 100
-    p = 0.92 # probability of each pair of nodes being connected
+    num_nodes = 128
+    p = 0.91 # probability of each pair of nodes being connected
     path_length_threshold = 2 # only paths with more than this many nodes considered
     frac = 0.2 # approx fraction of paths held out for validation
     generate_graph_data(num_graphs=num_graphs, num_nodes=num_nodes, p=p, path_length_threshold=path_length_threshold, frac=frac)
