@@ -9,7 +9,7 @@ from model import GPTConfig, GPT, MoEGPT
 import hydra
 from utils import *
 from ngram.ngram import *
-import pdb
+from collections import defaultdict
 
 dtype = 'None'
 # if torch.cuda.is_available():
@@ -87,9 +87,41 @@ def main(cfg):
     optimizer = model.configure_optimizers(optimizer=cfg.optimizer, weight_decay=cfg.weight_decay, learning_rate=cfg.learning_rate, betas=(cfg.beta1, cfg.beta2), device_type=device_type)
     checkpoint = None # free up memory
 
-    ### TRAINING ###
+    ### EVAL HELPERS ###
     @torch.no_grad()
-    def eval_model():        
+    def context_to_probs(context, ngram):
+        '''Convert the context (tensor batch x context_len) to a probability distribution (tensor batch x vocab_len) over the next tokens.'''
+        context_str = [[vocab[idx-1] for idx in context_b] for context_b in context]
+        true_probs = torch.zeros(cfg.batch_size, cfg.vocab_size)
+        true_probs[:, 1:] = torch.tensor([[ngram.prob_dist(context_b)[token] for token in vocab] for context_b in context_str])
+        return true_probs
+    
+    @torch.no_grad()
+    def kl_div(seqs, logits, ngram):
+        '''Return the KL divergences of the model's probability distribution from the correct one for the n-gram. 
+        Args:
+            seqs: X. (batch_size x path_tokens)
+            logits: (batch_size x path_tokens x vocab_size)
+            ngram: NGram object
+        Returns:
+            kl_divs: dict of KL divergences for the n-gram and its marginal smaller n-grams, n: kl_div.
+        '''
+        kl_divs = defaultdict(list)
+        model_log_probs = torch.nn.functional.log_softmax(logits, dim=-1)
+        model_log_probs = model_log_probs.detach().cpu()
+        seqs = seqs.detach().cpu()
+        # for each token in the sequence
+        for token_idx in range(len(seqs[0])):
+            # the maximum n is token_idx + 1 or ngram.n, whichever is smaller
+            for n in range(1, min(ngram.n+1, token_idx + 2)):
+                context = seqs[:, token_idx-(n-1):token_idx] # n-1 length sequence prior to token_idx
+                true_probs = context_to_probs(context, ngram.smaller_ngrams[n])
+                kl_divs[n].append(torch.nn.functional.kl_div(model_log_probs[:, token_idx], true_probs, reduction='batchmean').item())
+        kl_divs = {k: sum(v)/len(v) for k,v in kl_divs.items()} #take mean
+        return kl_divs
+
+    @torch.no_grad()
+    def eval_model():
         '''
         Returns a list containing:
          1. Dict containing train loss and val loss 
@@ -101,7 +133,7 @@ def main(cfg):
         model.eval()
         # Losses
         for split in ['train', 'val']:
-            kl_divs = []
+            kl_divs = defaultdict(list)
             losses = torch.zeros(cfg.eval_iters)
             dataloader = iter(pick_dataloader(split))
             for k in range(cfg.eval_iters):
@@ -117,30 +149,25 @@ def main(cfg):
                     X, Y = X.pin_memory().to(device, non_blocking=True), Y.pin_memory().to(device, non_blocking=True)
                 else:
                     X, Y = X.to(device), Y.to(device)
+                
                 with ctx:
                     logits, loss = model(X, Y) # logits is (batch_size x path_tokens x vocab_size)
                     # Expert activations
-                    expert_activations = model.transformer.h[0].moe.expert_activations.detach().cpu().numpy() # (batch, num_experts)
-                    loads += expert_activations.sum(0)
+                    expert_act = model.transformer.h[0].moe.expert_activations.detach().cpu().numpy() # (batch, num_experts)
+                    loads += expert_act.sum(0)
                     if split == 'val':
-                        for batch in range(X.shape[0]):
-                            model_log_probs = torch.nn.functional.log_softmax(logits[batch], dim=-1).cpu()
-                            seq = X[batch].cpu()
-                            for i in range(len(seq)):
-                                context = seq[max(0, i-ngram.n):i].tolist() # len <= n sequence prior to token i
-                                context_str = [vocab[token-1] for token in context if token != 0] # convert to string
-                                prob_dist = ngram.prob_dist(context_str)
-                                # true_probs[0] is zero because the padding token is not in the vocab
-                                true_probs = torch.zeros(cfg.vocab_size)
-                                true_probs[1:] = torch.tensor([prob_dist[token] for token in vocab])
-                                kl_div = torch.nn.functional.kl_div(model_log_probs[i], true_probs, reduction='batchmean').item()
-                                kl_divs.append(kl_div)
+                        batch_kl_divs = kl_div(X, logits, ngram)
+                        for k,v in batch_kl_divs.items():
+                            kl_divs[k].append(v)
                 losses[k] = loss.item()
             mean_losses[split] = losses.mean()
-            if split == 'val': mean_kl_div = sum(kl_divs)/len(kl_divs)
+            if split == 'val':
+                mean_kl_divs = {k: sum(v)/len(v) for k,v in kl_divs.items()}
         loads = loads/loads.sum(0) # normalize
         model.train()
-        return mean_losses, loads, mean_kl_div
+        return mean_losses, loads, mean_kl_divs
+
+    ### TRAINING ###
 
     # Training loop starts
     dataloader = iter(pick_dataloader('train'))
@@ -156,13 +183,13 @@ def main(cfg):
         # evaluate the loss on train/val sets and write checkpoints
         if iter_num % cfg.eval_interval == 0:
             # print('evaluating model')
-            losses, loads, kl_div = eval_model()
+            losses, loads, kl_divs = eval_model()
             print(f"step {iter_num}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
-            
+
             # Log expert load
             print(f"experts load %: {[round(100*load) for load in loads]}")
 
-            print(f"KL divergence: {kl_div:.4f}")
+            print(f"KL divergence: {kl_divs[ngram.n]:.4f}")
 
             if cfg.deploy: # wandb logging
                 wandb.log({
@@ -170,11 +197,12 @@ def main(cfg):
                     "train/loss": losses['train'],
                     "val/loss": losses['val'],
                     "lr": lr,
-                    "KL divergence": kl_div,
                     "loads/exp0": loads[0],
                     "loads/exp1": loads[1],
                     "loads/exp2": loads[2],
                 })
+                kl_divs_log = {f"kl_divergence/{k}-gram": v for k,v in kl_divs.items()}
+                wandb.log(kl_divs_log)
             # evaluate and checkpoint model
             if losses['val'] < best_val_loss or cfg.always_save_checkpoint:
                 best_val_loss = losses['val']
@@ -193,8 +221,6 @@ def main(cfg):
         if iter_num == 0 and cfg.eval_only:
             break
 
-        # forward backward update, with optional gradient accumulation to simulate larger batch size
-        # and using the GradScaler if data type is float16
         with ctx:
             logits, loss = model(X, Y)
             loss = loss / cfg.gradient_accumulation_steps

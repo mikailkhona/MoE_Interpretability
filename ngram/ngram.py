@@ -9,8 +9,12 @@ class NGram:
     def __init__(self, vocab, n, prob_table=None):
         self.vocab = vocab
         self.n = n
-        self.prob_table = prob_table if prob_table else self._initialize_prob_table()
-        self.smaller_ngrams = self._recursive_smaller_ngram() # marginal distributions of n-gram
+        if prob_table: # smaller ngram
+            self.prob_table = prob_table
+            self.smaller_ngrams = None
+        else: # main ngram
+            self.prob_table = self._initialize_prob_table()
+            self.smaller_ngrams = self._recursive_smaller_ngram()
 
     def _initialize_prob_table(self):
         prob_table = defaultdict(dict)
@@ -36,11 +40,11 @@ class NGram:
         """
         Recursively generates (n-1)-gram models down to 1-grams, based on the marginal probabilities of the n-gram model.
         """
-        ngrams = [self]
+        ngrams = {self.n: self}
 
         for k in range(self.n-1, 0, -1): # Generate k-gram based on the marginal distribution of k+1-gram
             prob_table = defaultdict(dict)
-            for context, dist in ngrams[-1].prob_table.items():
+            for context, dist in ngrams[k+1].prob_table.items():
                 marginal_context = context[1:]
                 for token, prob in dist.items():
                     if token in prob_table[marginal_context]:
@@ -55,15 +59,15 @@ class NGram:
 
             assert set(product(self.vocab, repeat=k-1)) == set(prob_table.keys()), "Make sure we don't miss any context"
 
-            ngrams.append(NGram(self.vocab, k, prob_table))
+            ngrams[k] = NGram(self.vocab, k, prob_table)
 
-        return ngrams[::-1] # reverse for ngrams from 1 to n
+        return ngrams # reverse for ngrams from 1 to n
     
     def prob_dist(self, prev_tokens):
         '''Give the probability distribution for the next token given the previous tokens. If the context is smaller than n-1, 
         use the model marginalized over the first tokens.'''
         if len(prev_tokens) < self.n-1:
-            return self.smaller_ngrams[len(prev_tokens)].prob_dist(prev_tokens)
+            return self.smaller_ngrams[len(prev_tokens)+1].prob_dist(prev_tokens)
         context = tuple(prev_tokens[-(self.n-1):])
         return self.prob_table[context]
 
@@ -96,7 +100,7 @@ if __name__ == '__main__':
     vocab_size = 10
     n = 6
     seq_length = 10
-    num_train_seqs = int(1e6)
+    num_train_seqs = int(1e8)
     num_val_seqs = int(0.2*num_train_seqs)
     vocab = [str(i) for i in range(vocab_size)]
 
