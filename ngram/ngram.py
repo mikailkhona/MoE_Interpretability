@@ -14,7 +14,7 @@ class NGram:
             self.smaller_ngrams = None
         else: # main ngram
             self.prob_table = self._initialize_prob_table()
-            self.smaller_ngrams = self._recursive_smaller_ngram()
+            self.ngrams = self._recursive_smaller_ngram()
 
     def _initialize_prob_table(self):
         prob_table = defaultdict(dict)
@@ -95,17 +95,104 @@ class NGram:
         token_map = np.array(self.vocab)
         np.savez(filename, token_map)
 
+class BuildUpNGram:
+    def __init__(self, vocab, n):
+        self.vocab = vocab
+        self.n = n
+        self.ngrams = self._build_ngrams()
+
+    def _build_ngrams(self):
+        ngrams = {}
+        
+        # Start with 1-gram
+        ngrams[1] = self._initialize_1gram()
+        
+        # Build up to n-gram
+        for k in range(2, self.n + 1):
+            ngrams[k] = self._build_next_ngram(ngrams[k-1])
+        
+        return ngrams
+
+    def _initialize_1gram(self):
+        prob_table = defaultdict(dict)
+        total_prob = 0
+        for token in self.vocab:
+            prob = random.random()
+            prob_table[()][token] = prob
+            total_prob += prob
+        
+        # Normalize probabilities
+        for token in self.vocab:
+            prob_table[()][token] /= total_prob
+        
+        return prob_table
+
+    def _build_next_ngram(self, prev_ngram):
+        new_ngram = defaultdict(dict)
+        prev_n = len(list(prev_ngram.keys())[0]) + 1
+        contexts = list(product(self.vocab, repeat=prev_n+1))
+        
+        for context in contexts:
+            next_token = context[-1]
+            prev_context = context[1:-1]
+            new_context = context[:-1]
+            
+            prev_prob = prev_ngram[prev_context][next_token]
+            new_prob = prev_prob * random.random()
+            new_ngram[new_context][next_token] = new_prob
+        
+        # Normalize probabilities
+        for context in new_ngram:
+            total_prob = sum(new_ngram[context].values())
+            for token in new_ngram[context]:
+                new_ngram[context][token] /= total_prob
+        
+        return new_ngram
+
+    def prob_dist(self, prev_tokens):
+        k = len(prev_tokens) + 1
+        if k > self.n:
+            k = self.n
+        
+        context = tuple(prev_tokens[-(k-1):])
+        return self.ngrams[k][context]
+
+    def generate(self, prev_tokens=None, num_tokens=1):
+        generated = []
+        if not prev_tokens:
+            prev_tokens = []
+        
+        for _ in range(num_tokens):
+            dist = self.prob_dist(prev_tokens)
+            next_token = random.choices(list(dist.keys()), weights=list(dist.values()))[0]
+            generated.append(next_token)
+            prev_tokens = prev_tokens + [next_token]
+        
+        return generated
+
+    def save(self, filename):
+        with open(filename, 'wb') as f:
+            pickle.dump(self, f)
+
+    def save_tokenized_seqs(self, filename, num_seqs, seq_length):
+        seqs = [[self.vocab.index(t) for t in self.generate(num_tokens=seq_length)]
+                for _ in tqdm(range(num_seqs), desc='Creating sequences')]
+        np.save(filename, np.array(seqs))
+
+    def save_token_map(self, filename):
+        token_map = np.array(self.vocab)
+        np.savez(filename, token_map)
 
 if __name__ == '__main__':
     vocab_size = 10
     n = 6
     seq_length = 10
-    num_train_seqs = int(1e8)
+    num_train_seqs = int(1e6)
     num_val_seqs = int(0.2*num_train_seqs)
     vocab = [str(i) for i in range(vocab_size)]
 
     print(f'Builiding NGrams with vocab_size = {vocab_size} and n <= {n}')
-    ngram = NGram(vocab, n)
+    ngram = BuildUpNGram(vocab, n)
 
     print('Testing generation')
     inp = random.choice(vocab)

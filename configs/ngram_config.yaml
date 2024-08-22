@@ -27,7 +27,7 @@ block_size : 16
 vocab_size: 11
 n_layer : 1
 n_head : 1
-n_embd : 8
+n_embd : 16
 num_experts: 3
 expert_k: 1
 noisy_gating: true

@@ -115,7 +115,7 @@ def main(cfg):
             # the maximum n is token_idx + 1 or ngram.n, whichever is smaller
             for n in range(1, min(ngram.n+1, token_idx + 2)):
                 context = seqs[:, token_idx-(n-1):token_idx] # n-1 length sequence prior to token_idx
-                true_probs = context_to_probs(context, ngram.smaller_ngrams[n])
+                true_probs = context_to_probs(context, ngram)
                 kl_divs[n].append(torch.nn.functional.kl_div(model_log_probs[:, token_idx], true_probs, reduction='batchmean').item())
         kl_divs = {k: sum(v)/len(v) for k,v in kl_divs.items()} #take mean
         return kl_divs
